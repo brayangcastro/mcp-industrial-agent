@@ -1,0 +1,33 @@
+┌─────────────────────────────────────────────────────────────────────┐
+│  MCP host (Claude Desktop, Claude Code, Cursor, etc.)               │
+│   user prompt ──► model decides which tool to call                  │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │  stdio  (JSON-RPC over MCP)
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  industrial-mcp  (this repo)                                        │
+│                                                                     │
+│   server.py ── wires tools, env config, audit log                   │
+│      │                                                              │
+│      ├── tools.py ── 5 read tools + 1 write tool (dry-run default)  │
+│      │                                                              │
+│      ├── safety.py ── preconditions, advisory warnings              │
+│      │                                                              │
+│      ├── audit.py ── append-only JSONL of executed actions          │
+│      │                                                              │
+│      └── adapters/                                                  │
+│            ├── mock.py    ← default, deterministic demo data        │
+│            ├── mqtt.py    ← (your impl) live ESP32 fleet            │
+│            └── rest.py    ← (your impl) thin REST adapter           │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+            ┌──────────────────┼──────────────────┐
+            ▼                  ▼                  ▼
+   ┌──────────────┐   ┌────────────────┐  ┌──────────────────┐
+   │ MQTT broker  │   │ Internal REST  │  │ Historian / TSDB │
+   │ (HiveMQ,     │   │ API (Node.js,  │  │ (InfluxDB,       │
+   │ Mosquitto)   │   │ FastAPI, etc.) │  │ TimescaleDB)     │
+   └──────┬───────┘   └────────┬───────┘  └────────┬─────────┘
+          │                    │                   │
+          ▼                    ▼                   ▼
+   [field devices: ESP32, PLC bridges, gateways, etc.]

@@ -1,0 +1,13 @@
+{
+  "_comment": "Drop this block into your Claude Desktop config under mcpServers. Default mode is READ-ONLY; the trigger_motor_action tool will refuse to execute even if Claude flips dry_run=False.",
+  "mcpServers": {
+    "industrial": {
+      "command": "uvx",
+      "args": ["industrial-mcp@latest"],
+      "env": {
+        "INDUSTRIAL_MCP_ADAPTER": "mock",
+        "INDUSTRIAL_MCP_ALLOW_WRITES": "false"
+      }
+    }
+  }
+}
