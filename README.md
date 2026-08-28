@@ -43,9 +43,9 @@ storage facility, so it runs in CI with no infrastructure.
 │      ├── audit.py ── append-only JSONL of executed actions          │
 │      │                                                              │
 │      └── adapters/                                                  │
+│            ├── base.py    ← PlantAdapter protocol (the contract)    │
 │            ├── mock.py    ← default, deterministic demo data        │
-│            ├── mqtt.py    ← (your impl) live ESP32 fleet            │
-│            └── rest.py    ← (your impl) thin REST adapter           │
+│            └── esp32.py   ← (in progress) HTTP to a live device     │
 └──────────────────────────────┬──────────────────────────────────────┘
                                │
             ┌──────────────────┼──────────────────┐
@@ -134,18 +134,23 @@ the signal.
 
 ## Adapters
 
-The mock adapter ships in `src/industrial_mcp/adapters/mock.py` and is
-the only one wired in the scaffold. It produces deterministic data so
-CI and demos behave identically.
+The contract every adapter must satisfy lives in
+`src/industrial_mcp/adapters/base.py` as a `PlantAdapter` Protocol —
+`list_plants`, `list_silos`, `get_silo_thermometry`, `list_motors`,
+`get_motor`, `get_plant_context`, `get_active_alerts`,
+`apply_motor_action`. Motor records must carry `plant_id`; the tool
+layer resolves plant context from the motor rather than from a
+constant, so a motor without one is refused instead of evaluated
+against the wrong plant.
 
-To talk to a real plant, drop a sibling module (e.g. `mqtt.py`)
-implementing the same surface — `list_plants`, `list_silos`,
-`get_silo_thermometry`, `list_motors`, `get_motor`,
-`get_plant_context`, `get_active_alerts`, `apply_motor_action` — and
-select it with `INDUSTRIAL_MCP_ADAPTER=mqtt`.
+`INDUSTRIAL_MCP_ADAPTER` selects which one runs. It currently knows
+`mock` (deterministic, shipped, used by CI) and `esp32` (in progress).
+An unrecognized name raises at startup — the server never falls back to
+the mock, because answering questions about a plant you are not
+connected to is worse than refusing to start.
 
-A reference MQTT adapter (HiveMQ-compatible, paho-mqtt) is the next
-issue in the tracker.
+To talk to a real plant, drop a sibling module implementing the
+Protocol and add its name to `build_adapter` in `server.py`.
 
 ---
 

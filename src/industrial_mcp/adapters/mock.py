@@ -31,17 +31,28 @@ _SILOS: list[dict[str, Any]] = [
 ]
 
 
+_PLANT_ID = "plant-nw-1"
+
+
+# Every motor carries its plant: the safety layer resolves plant context
+# from the motor record, so a motor without one cannot be actioned.
 _MOTORS: list[dict[str, Any]] = [
     # Fans (4 per silo on 1-7)
     *[
-        {"id": f"fan-{i}-{n}", "kind": "fan", "silo_id": f"silo-{i}", "state": "stopped"}
+        {
+            "id": f"fan-{i}-{n}",
+            "kind": "fan",
+            "plant_id": _PLANT_ID,
+            "silo_id": f"silo-{i}",
+            "state": "stopped",
+        }
         for i in range(1, 8)
         for n in range(1, 5)
     ],
     # Conveyors / elevators
-    {"id": "elev-main", "kind": "elevator", "silo_id": None, "state": "stopped"},
-    {"id": "conv-top", "kind": "conveyor", "silo_id": None, "state": "stopped"},
-    {"id": "conv-pit", "kind": "conveyor", "silo_id": None, "state": "stopped"},
+    {"id": "elev-main", "kind": "elevator", "plant_id": _PLANT_ID, "silo_id": None, "state": "stopped"},
+    {"id": "conv-top", "kind": "conveyor", "plant_id": _PLANT_ID, "silo_id": None, "state": "stopped"},
+    {"id": "conv-pit", "kind": "conveyor", "plant_id": _PLANT_ID, "silo_id": None, "state": "stopped"},
 ]
 
 
@@ -58,7 +69,7 @@ class MockAdapter:
     def list_plants(self) -> list[dict[str, Any]]:
         return [
             {
-                "id": "plant-nw-1",
+                "id": _PLANT_ID,
                 "label": "Northwestern Mexico grain facility",
                 "silo_count": len(_SILOS),
                 "motor_count": len(_MOTORS),
@@ -66,7 +77,7 @@ class MockAdapter:
         ]
 
     def list_silos(self, plant_id: str) -> list[dict[str, Any]]:
-        if plant_id != "plant-nw-1":
+        if plant_id != _PLANT_ID:
             return []
         return [{"id": s["id"], "capacity_t": s["capacity_t"]} for s in _SILOS]
 
@@ -94,7 +105,7 @@ class MockAdapter:
         }
 
     def list_motors(self, plant_id: str, kind: str | None = None) -> list[dict[str, Any]]:
-        if plant_id != "plant-nw-1":
+        if plant_id != _PLANT_ID:
             return []
         return [
             dict(m) for m in self._motors.values() if kind is None or m["kind"] == kind
