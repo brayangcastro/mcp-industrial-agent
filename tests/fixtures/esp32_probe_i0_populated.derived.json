@@ -1,0 +1,10 @@
+{
+  "sensores": [
+    {"idx": 0, "punto": "P1", "estado": "valid", "temp": 24.31, "rom": "28ff640e3f1a0c11"},
+    {"idx": 1, "punto": "P2", "estado": "valid", "temp": 25.06, "rom": "28ff640e3f1a0c22"},
+    {"idx": 2, "punto": "P3", "estado": "fault", "temp": null, "rom": "28ff640e3f1a0c33"},
+    {"idx": 3, "punto": "P4", "estado": "valid", "temp": 26.75, "rom": "28ff640e3f1a0c44"},
+    {"idx": 4, "punto": "P5", "estado": "open", "temp": null, "rom": "0000000000000000"}
+  ],
+  "present": true
+}
