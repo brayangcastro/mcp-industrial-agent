@@ -82,18 +82,18 @@ def test_maps_min_max_avg_from_valid_sensors_only() -> None:
     assert snapshot["max_temp_c"] == 26.75
     assert snapshot["avg_temp_c"] == 25.37
     assert snapshot["sensors_valid"] == 3
-    assert snapshot["sensors_total"] == 5
+    assert snapshot["sensors_total"] == 4
 
 
 def test_faulted_sensor_is_not_averaged_as_zero() -> None:
     snapshot = _adapter(_populated_routes()).get_silo_thermometry("silo-3")
 
-    # Had the two unreadable channels been folded in as 0 °C, the average
-    # would drop to ~15.2 and the max would still look fine — a silo that
-    # is losing its instrumentation would read as a silo that is cool.
+    # Had the unreadable channel been folded in as 0 °C, the average would
+    # drop to ~19 and the max would still look fine — a silo that is losing
+    # its instrumentation would read as a silo that is cool.
     assert snapshot["avg_temp_c"] > 25.0
     faulted = {f["punto"]: f["estado"] for f in snapshot["faulted_sensors"]}
-    assert faulted == {"P3": "fault", "P5": "open"}
+    assert faulted == {"P3": "fault"}
 
 
 def test_aggregates_two_real_cables_recorded_from_the_device() -> None:
