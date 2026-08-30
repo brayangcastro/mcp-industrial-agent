@@ -96,6 +96,30 @@ def test_faulted_sensor_is_not_averaged_as_zero() -> None:
     assert faulted == {"P3": "fault", "P5": "open"}
 
 
+def test_aggregates_two_real_cables_recorded_from_the_device() -> None:
+    """Recorded from banco-silo3 with two DS18B20 cables on mux channels 0 and 8.
+
+    Channel 0 was warmed by hand (31.5 °C) while channel 8 was chilled in a
+    glass (15.5 °C) — a 16-degree spread that the average alone reports as an
+    unremarkable 23.5 °C. Both probes read valid; nothing was faulty. That is
+    why the snapshot carries min and max, not just avg: a real hot spot next to
+    a cold one averages out to a number that looks like neither.
+    """
+    routes = {
+        "/api/config": _fixture("esp32_config.json"),
+        "/api/probe?i=0": _fixture("esp32_probe_i0_populated.json"),
+        "/api/probe?i=8": _fixture("esp32_probe_i8_populated.json"),
+    }
+    snapshot = _adapter(routes, cables=[0, 8]).get_silo_thermometry("silo-3")
+
+    assert snapshot["min_temp_c"] == 15.5
+    assert snapshot["max_temp_c"] == 31.5
+    assert snapshot["avg_temp_c"] == 23.5
+    assert snapshot["cable_count"] == 2
+    assert snapshot["sensors_valid"] == 2
+    assert snapshot["faulted_sensors"] == []
+
+
 def test_capacity_and_fill_are_none_not_zero() -> None:
     snapshot = _adapter(_populated_routes()).get_silo_thermometry("silo-3")
     # The module measures grain temperature and nothing else. Zero would
