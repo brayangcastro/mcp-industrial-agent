@@ -14,7 +14,12 @@ Responses from a real SiloScan module (`agrostar-s3-onewire` 0.3.0, device
 | `esp32_probe_i0_populated.json` | **recorded** | `GET /api/probe?i=0`, one DS18B20 warmed by hand — 31.5 °C |
 | `esp32_probe_i8_populated.json` | **recorded** | `GET /api/probe?i=8`, one DS18B20 chilled in a glass — 15.5 °C |
 | `esp32_last_populated.json` | **recorded** | `GET /api/last` with both cables present |
-| `esp32_probe_i0_populated.derived.json` | **derived** | Multi-sensor shape with one `fault` channel, from `web_server.h:34-46` + `payload.h:31-35`. Kept because no real probe has been faulted yet; replace once one is. |
+| `esp32_probe_fault.json` | **recorded** | `GET /api/probe?i=0` with the data line briefly grounded — ROM enumerates, scratchpad fails CRC, `estado: fault` / `temp: null` |
+
+**Every fixture here is recorded from hardware. None are derived.** The fault
+capture took 451 polls over 98 seconds of wiggling one connector; it is the
+same physical probe as `esp32_probe_i0_populated.json` (identical `rom`), which
+is what makes the pair useful — the same sensor, reading and then not reading.
 
 Per sensor, `estado` can only be `valid` or `fault`. The vocabulary in
 `payload.h:31-35` also defines `open` (`CH_EMPTY`), but `owScanCable` cannot

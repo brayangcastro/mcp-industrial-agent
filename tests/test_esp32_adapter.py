@@ -70,30 +70,43 @@ def _populated_routes() -> dict[str, Any]:
     return {
         "/api/status": _fixture("esp32_status.json"),
         "/api/config": _fixture("esp32_config.json"),
-        "/api/probe?i=0": _fixture("esp32_probe_i0_populated.derived.json"),
+        "/api/probe?i=0": _fixture("esp32_probe_i0_populated.json"),
+        "/api/probe?i=8": _fixture("esp32_probe_i8_populated.json"),
     }
 
 
-def test_maps_min_max_avg_from_valid_sensors_only() -> None:
-    snapshot = _adapter(_populated_routes()).get_silo_thermometry("silo-3")
-
-    # Valid readings in the fixture: 24.31, 25.06, 26.75
-    assert snapshot["min_temp_c"] == 24.31
-    assert snapshot["max_temp_c"] == 26.75
-    assert snapshot["avg_temp_c"] == 25.37
-    assert snapshot["sensors_valid"] == 3
-    assert snapshot["sensors_total"] == 4
-
-
 def test_faulted_sensor_is_not_averaged_as_zero() -> None:
-    snapshot = _adapter(_populated_routes()).get_silo_thermometry("silo-3")
+    """The fault fixture was captured from the device, not constructed.
 
-    # Had the unreadable channel been folded in as 0 °C, the average would
-    # drop to ~19 and the max would still look fine — a silo that is losing
-    # its instrumentation would read as a silo that is cool.
-    assert snapshot["avg_temp_c"] > 25.0
-    faulted = {f["punto"]: f["estado"] for f in snapshot["faulted_sensors"]}
-    assert faulted == {"P3": "fault"}
+    Wiggling cable 0's connector produced one bad read in 451 polls: the ROM
+    still enumerated and ``present`` stayed true, but the scratchpad failed
+    CRC, so the module reported ``estado: fault`` with ``temp: null``. That is
+    the shape a loose terminal makes in the field — the device knows the probe
+    is there and refuses to give a number for it.
+    """
+    routes = {
+        "/api/config": _fixture("esp32_config.json"),
+        "/api/probe?i=0": _fixture("esp32_probe_fault.json"),
+        "/api/probe?i=8": _fixture("esp32_probe_i8_populated.json"),
+    }
+    snapshot = _adapter(routes, cables=[0, 8]).get_silo_thermometry("silo-3")
+
+    # Only cable 8's 15.5 °C is a measurement. Folding the faulted probe in as
+    # 0 °C would report 7.75 °C — a silo losing its instrumentation reading as
+    # a silo that is merely cold.
+    assert snapshot["avg_temp_c"] == 15.5
+    assert snapshot["min_temp_c"] == 15.5
+    assert snapshot["max_temp_c"] == 15.5
+    assert snapshot["sensors_valid"] == 1
+    assert snapshot["sensors_total"] == 2
+
+    assert len(snapshot["faulted_sensors"]) == 1
+    faulted = snapshot["faulted_sensors"][0]
+    assert faulted["estado"] == "fault"
+    assert faulted["cable"] == 0
+    # The ROM survives into the report, so an operator knows which probe to go
+    # look at rather than being told "a sensor somewhere failed".
+    assert faulted["rom"] == "2839a47997140315"
 
 
 def test_aggregates_two_real_cables_recorded_from_the_device() -> None:
@@ -157,7 +170,7 @@ def test_blind_module_raises_a_sensor_health_alert_not_silence() -> None:
 
 
 def test_hot_silo_alerts_against_the_configured_threshold() -> None:
-    hot = _fixture("esp32_probe_i0_populated.derived.json")
+    hot = _fixture("esp32_probe_i0_populated.json")
     hot["sensores"][0]["temp"] = 34.2  # umbral in the recorded config is 30
     routes = {**_populated_routes(), "/api/probe?i=0": hot}
 
