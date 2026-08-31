@@ -1,0 +1,4 @@
+[     0s] [WiFi] AP "SiloScan-Silo3" (WPA2) en 192.168.4.1
+[     6s] [WiFi] STA "CHIRULLI_EXT": 192.168.1.71
+[     7s] [main] modo continuo â ronda cada 60 min
+[    10s] [main] ronda 186 (arranque): 0 cables, max nan, heap 230840

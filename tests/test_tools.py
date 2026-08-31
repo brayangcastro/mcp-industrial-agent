@@ -90,3 +90,45 @@ def test_unknown_motor_returns_clean_error(tools: Tools) -> None:
     result = tools.trigger_motor_action("does-not-exist", "start")
     assert result["ok"] is False
     assert result["phase"] == "lookup"
+
+
+class _PlantRecordingAdapter(MockAdapter):
+    """Mock that remembers which plant the tool layer asked context for."""
+
+    def __init__(self, motor: dict) -> None:
+        super().__init__()
+        self._motor = motor
+        self.plant_asked: str | None = None
+
+    def get_motor(self, motor_id: str) -> dict | None:
+        return dict(self._motor) if motor_id == self._motor["id"] else None
+
+    def get_plant_context(self, plant_id: str) -> dict:
+        self.plant_asked = plant_id
+        return super().get_plant_context(plant_id)
+
+
+def _tools_for(adapter: MockAdapter) -> Tools:
+    fd, path = tempfile.mkstemp(prefix="audit_", suffix=".jsonl")
+    os.close(fd)
+    config = Config(adapter="mock", audit_log_path=path, allow_writes=False)
+    return Tools(adapter=adapter, config=config, audit=AuditLog(path))
+
+
+def test_plant_context_is_resolved_from_the_motor() -> None:
+    adapter = _PlantRecordingAdapter(
+        {"id": "fan-9-9", "kind": "fan", "plant_id": "plant-se-2", "silo_id": "silo-1", "state": "stopped"}
+    )
+    _tools_for(adapter).trigger_motor_action("fan-9-9", "start")
+    assert adapter.plant_asked == "plant-se-2"
+
+
+def test_motor_without_plant_id_is_refused_not_guessed() -> None:
+    adapter = _PlantRecordingAdapter(
+        {"id": "fan-orphan", "kind": "fan", "silo_id": "silo-1", "state": "stopped"}
+    )
+    result = _tools_for(adapter).trigger_motor_action("fan-orphan", "start")
+    assert result["ok"] is False
+    assert result["phase"] == "lookup"
+    assert "plant_id" in result["reason"]
+    assert adapter.plant_asked is None

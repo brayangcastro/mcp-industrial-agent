@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from industrial_mcp.adapters.mock import MockAdapter
+from industrial_mcp.adapters.base import PlantAdapter
 from industrial_mcp.audit import AuditLog
 from industrial_mcp.config import Config
 from industrial_mcp.safety import evaluate_motor_action
@@ -22,7 +22,7 @@ from industrial_mcp.safety import evaluate_motor_action
 class Tools:
     """Bundle of tool implementations bound to one adapter + config."""
 
-    def __init__(self, adapter: MockAdapter, config: Config, audit: AuditLog) -> None:
+    def __init__(self, adapter: PlantAdapter, config: Config, audit: AuditLog) -> None:
         self.adapter = adapter
         self.config = config
         self.audit = audit
@@ -92,7 +92,18 @@ class Tools:
                 "reason": f"unknown motor {motor_id!r}",
             }
 
-        plant_ctx = self.adapter.get_plant_context("plant-nw-1")
+        # The plant comes from the motor record, never from a constant and
+        # never from the model: evaluating a fan against the wrong plant's
+        # silo temperatures would pass safety checks that should have failed.
+        plant_id = motor.get("plant_id")
+        if not plant_id:
+            return {
+                "ok": False,
+                "phase": "lookup",
+                "reason": f"motor {motor_id!r} has no plant_id; adapter cannot resolve plant context",
+            }
+
+        plant_ctx = self.adapter.get_plant_context(plant_id)
         result = evaluate_motor_action(motor, action, plant_ctx)
 
         report = {

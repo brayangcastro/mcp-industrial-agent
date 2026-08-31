@@ -258,6 +258,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -271,6 +272,7 @@ rest = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
     { name = "httpx", marker = "extra == 'rest'", specifier = ">=0.27.0" },
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "paho-mqtt", marker = "extra == 'mqtt'", specifier = ">=2.0.0" },

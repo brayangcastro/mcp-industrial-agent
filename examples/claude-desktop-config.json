@@ -1,11 +1,27 @@
 {
-  "_comment": "Drop this block into your Claude Desktop config under mcpServers. Default mode is READ-ONLY; the trigger_motor_action tool will refuse to execute even if Claude flips dry_run=False.",
+  "_comment": "Drop one of these blocks into your Claude Desktop config under mcpServers. Default mode is READ-ONLY; the trigger_motor_action tool will refuse to execute even if Claude flips dry_run=False.",
+
+  "_mock": "No hardware needed. Deterministic fake plant, good for trying the tools out.",
+  "_esp32": "Talks HTTP to a real SiloScan module on your LAN. Use the absolute path to uv: Claude Desktop does not inherit your shell PATH. INDUSTRIAL_MCP_ESP32_CABLES lists the mux channels that actually have a cable on them -- the default is channel 0 only, so leaving it out silently drops every other probe.",
+  "_transport": "This is MCP over stdio: Claude Desktop launches the process on your own machine and talks to it over stdin/stdout. Nothing reaches the module from outside your LAN. The module has no authentication, so do not put it behind a remote MCP transport without an authenticated gateway in front.",
+
   "mcpServers": {
     "industrial": {
       "command": "uvx",
       "args": ["industrial-mcp@latest"],
       "env": {
         "INDUSTRIAL_MCP_ADAPTER": "mock",
+        "INDUSTRIAL_MCP_ALLOW_WRITES": "false"
+      }
+    },
+
+    "industrial-esp32": {
+      "command": "C:\\Users\\you\\AppData\\Local\\uv\\bin\\uv.exe",
+      "args": ["--directory", "C:\\path\\to\\mcp-industrial-agent", "run", "industrial-mcp"],
+      "env": {
+        "INDUSTRIAL_MCP_ADAPTER": "esp32",
+        "INDUSTRIAL_MCP_ESP32_HOST": "192.168.1.69",
+        "INDUSTRIAL_MCP_ESP32_CABLES": "0,8",
         "INDUSTRIAL_MCP_ALLOW_WRITES": "false"
       }
     }

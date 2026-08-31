@@ -16,18 +16,27 @@
 │      ├── audit.py ── append-only JSONL of executed actions          │
 │      │                                                              │
 │      └── adapters/                                                  │
+│            ├── base.py    ← PlantAdapter protocol (the contract)    │
 │            ├── mock.py    ← default, deterministic demo data        │
-│            ├── mqtt.py    ← (your impl) live ESP32 fleet            │
-│            └── rest.py    ← (your impl) thin REST adapter           │
+│            ├── esp32.py   ← SHIPPED: HTTP to a live SiloScan module │
+│            └── mqtt.py    ← (your impl) broker-backed fleet         │
 └──────────────────────────────┬──────────────────────────────────────┘
                                │
-            ┌──────────────────┼──────────────────┐
-            ▼                  ▼                  ▼
-   ┌──────────────┐   ┌────────────────┐  ┌──────────────────┐
-   │ MQTT broker  │   │ Internal REST  │  │ Historian / TSDB │
-   │ (HiveMQ,     │   │ API (Node.js,  │  │ (InfluxDB,       │
-   │ Mosquitto)   │   │ FastAPI, etc.) │  │ TimescaleDB)     │
-   └──────┬───────┘   └────────┬───────┘  └────────┬─────────┘
-          │                    │                   │
-          ▼                    ▼                   ▼
-   [field devices: ESP32, PLC bridges, gateways, etc.]
+            ┌──────────────────┴──────────────────┐
+            ▼                                     ▼
+   ┌────────────────────────┐          ┌────────────────────────┐
+   │ VERIFIED PATH          │          │ (your impl)            │
+   │ HTTP over LAN          │          │ MQTT broker, internal  │
+   │ GET /api/probe?i=N     │          │ REST, historian/TSDB   │
+   └───────────┬────────────┘          └───────────┬────────────┘
+               │                                   │
+               ▼                                   ▼
+   ┌────────────────────────┐          [brokers, PLC bridges,
+   │ ESP32-S3 SiloScan      │           gateways, etc.]
+   │ DS18B20 on OneWire     │
+   │ behind a 16-ch mux     │
+   └────────────────────────┘
+        real grain probes
+
+   Read path verified 2026-08-30 — see docs/hardware-verification.md
+   Write path (relay/motor) NOT yet verified against hardware.
