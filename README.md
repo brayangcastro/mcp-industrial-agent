@@ -105,6 +105,7 @@ unlocks the path where a tool call would actually mutate state.
 | `get_silo_thermometry` | read | Latest thermometry snapshot (min/avg/max °C). |
 | `list_motors` | read | Motors at a plant, optionally filtered by kind. |
 | `get_active_alerts` | read | Active alerts, filterable by severity. |
+| `scan_devices` | read | Find modules on the LAN when one stopped answering. Never writes config. |
 | `trigger_motor_action` | **write** | Start/stop a motor — dry-run by default, safety-gated, audited. |
 
 Tool schemas live in [`src/industrial_mcp/tools.py`](src/industrial_mcp/tools.py).
@@ -161,7 +162,8 @@ about a plant you are not connected to is worse than refusing to start.
 
 ```bash
 INDUSTRIAL_MCP_ADAPTER=esp32 \
-INDUSTRIAL_MCP_ESP32_HOST=192.168.1.100 \
+INDUSTRIAL_MCP_ESP32_HOST=banco-silo3.local \
+INDUSTRIAL_MCP_ESP32_DEVICE_ID=banco-silo3 \
 INDUSTRIAL_MCP_ESP32_CABLES=0,8 \
 uv run industrial-mcp
 ```
@@ -169,6 +171,25 @@ uv run industrial-mcp
 `INDUSTRIAL_MCP_ESP32_CABLES` defaults to channel `0` alone — each
 channel costs a OneWire conversion, so the default is cheap rather than
 complete. Leaving it out silently drops every other probe.
+
+**Use a name, not an address.** Firmware 0.5.0+ publishes
+`<device_id>.local` over mDNS. DHCP will move the address out from under
+any file you write it into — the bench module took three different
+leases in three reboots, and every stale config in this repo's history
+traces back to that.
+
+`INDUSTRIAL_MCP_ESP32_DEVICE_ID` is optional and turns on self-healing:
+when the configured host stops answering, the adapter looks the module
+up by name, then by subnet sweep, and adopts the new address **only if
+the device identifies itself as that id**. Without it the adapter
+reports `device_unreachable` instead of guessing — a sweep cannot tell
+"my module moved" from "some other module answered", and silo 3's tools
+reading silo 7's sensors would produce numbers that look perfectly
+reasonable and come from the wrong bin.
+
+The `scan_devices` tool exposes the same sweep to the model, read-only:
+it reports what answered and never edits configuration. Scanning is
+restricted to private address space and to ranges of /22 or smaller.
 
 Two things the `esp32` adapter does that are worth copying into your
 own adapter, both of them about not laundering a sensor fault into a

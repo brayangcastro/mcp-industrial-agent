@@ -33,6 +33,8 @@ from typing import Any
 
 import httpx
 
+from industrial_mcp.adapters import discovery
+
 # Channel vocabulary emitted by the firmware (payload.h:31).
 _VALID = "valid"
 
@@ -50,14 +52,24 @@ class Esp32Adapter:
         cables: list[int] | None = None,
         timeout_s: float = _DEFAULT_TIMEOUT_S,
         client: httpx.Client | None = None,
+        device_id: str | None = None,
     ) -> None:
         self.host = host
         # Which mux channels to read. One instrumented cable is the
         # default: probing all 16 costs a OneWire conversion each.
         self.cables = cables if cables is not None else [0]
+        self._timeout_s = timeout_s
+        # Set: the client was supplied (tests), so relocating would swap out
+        # the transport under the caller's feet. Discovery stays off.
+        self._client_is_external = client is not None
         self._client = client or httpx.Client(
             base_url=f"http://{host}", timeout=timeout_s
         )
+        # Which module this adapter is for. Without it a sweep cannot tell
+        # "the device moved" from "some other module answered", so discovery
+        # only runs when this is known.
+        self.device_id = device_id
+        self.relocated_from: str | None = None
 
     @classmethod
     def from_env(cls) -> Esp32Adapter:
@@ -68,9 +80,44 @@ class Esp32Adapter:
             )
         raw = os.environ.get("INDUSTRIAL_MCP_ESP32_CABLES", "0")
         cables = [int(part) for part in raw.split(",") if part.strip()]
-        return cls(host=host, cables=cables)
+        return cls(
+            host=host,
+            cables=cables,
+            device_id=os.environ.get("INDUSTRIAL_MCP_ESP32_DEVICE_ID"),
+        )
 
     # ── transport ─────────────────────────────────────────────────
+
+    def _request(self, path: str) -> dict[str, Any] | list[Any] | None:
+        try:
+            response = self._client.get(path)
+            response.raise_for_status()
+            return response.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+
+    def _relocate(self) -> bool:
+        """The configured host went quiet. Find the module by identity.
+
+        Returns True if a new host was adopted. This repoints the *running*
+        session, which is the part a config file cannot do: that file is read
+        once at host startup, so rewriting it would fix things one restart
+        too late.
+
+        Only ever adopts a host that identifies itself as ``device_id``.
+        Pointing thermometry tools at whatever else happens to answer on the
+        subnet would be worse than staying broken.
+        """
+        if self.device_id is None or self._client_is_external:
+            return False
+        found = discovery.find_device(self.device_id)
+        if found is None or found == self.host:
+            return False
+        self.relocated_from = self.host
+        self.host = found
+        self._client.close()
+        self._client = httpx.Client(base_url=f"http://{found}", timeout=self._timeout_s)
+        return True
 
     def _get(self, path: str) -> dict[str, Any] | list[Any] | None:
         """GET and parse JSON. Returns None on any failure — never raises.
@@ -78,13 +125,15 @@ class Esp32Adapter:
         A tool that raises turns an unreachable module into a broken
         server; a tool that returns None lets the caller say "I could not
         reach the device", which is the true answer.
+
+        One retry, and only after the module has been re-identified at a new
+        address — not a blind retry, which would just double the wait on a
+        device that is genuinely off.
         """
-        try:
-            response = self._client.get(path)
-            response.raise_for_status()
-            return response.json()
-        except (httpx.HTTPError, ValueError):
-            return None
+        result = self._request(path)
+        if result is None and self._relocate():
+            result = self._request(path)
+        return result
 
     def _unreachable(self, what: str) -> dict[str, Any]:
         return {

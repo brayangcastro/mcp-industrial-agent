@@ -29,6 +29,16 @@ with DS18B20 probes on a OneWire mux and a relay on GPIO5.
   section.
 - Hardware-recorded fixtures in `tests/fixtures/`, including a real CRC fault
   captured over 451 polls and both relay states.
+- `scan_devices` tool and `adapters/discovery.py` — find modules that took a
+  new DHCP lease. Name lookup first (`<device_id>.local`, firmware 0.5.0+),
+  subnet sweep second. The tool is read-only and **never edits configuration**:
+  `claude_desktop_config.json` is read once at host startup, so rewriting it
+  would fix a stale address one restart too late, and a model-writable file
+  that decides which tools load with which environment is a privilege
+  escalation path, not a convenience.
+- Optional `INDUSTRIAL_MCP_ESP32_DEVICE_ID`. When set, the adapter repoints
+  itself mid-session if the configured host goes quiet — but only to a device
+  that identifies itself as that id.
 - This changelog.
 
 ### Changed
@@ -69,6 +79,8 @@ Carried here deliberately rather than left to the commit log:
   the firmware.
 - The module has **no authentication**. Acceptable on a lab LAN over stdio,
   where nothing reaches it from outside. Not acceptable exposed.
+- Discovery costs the full request timeout before it starts — a stale host
+  takes ~5 s to fail, then ~5 s more to relocate and retry. Correct, not fast.
 - Polling `/api/probe` faster than about once every 5 s wedges the module's
   HTTP server permanently — the OneWire read blocks the AsyncTCP callback. The
   board keeps answering ping, which makes it look like a network fault. Fix

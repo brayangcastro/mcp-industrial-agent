@@ -55,6 +55,7 @@ def build_server() -> FastMCP:
     mcp.tool()(tools.get_silo_thermometry)
     mcp.tool()(tools.list_motors)
     mcp.tool()(tools.get_active_alerts)
+    mcp.tool()(tools.scan_devices)
     mcp.tool()(tools.trigger_motor_action)
 
     return mcp

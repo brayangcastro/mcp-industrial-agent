@@ -3,6 +3,8 @@
 
   "_mock": "No hardware needed. Deterministic fake plant, good for trying the tools out.",
   "_esp32": "Talks HTTP to a real SiloScan module on your LAN. Use the absolute path to uv: Claude Desktop does not inherit your shell PATH. INDUSTRIAL_MCP_ESP32_CABLES lists the mux channels that actually have a cable on them -- the default is channel 0 only, so leaving it out silently drops every other probe.",
+  "_host": "Prefer <device_id>.local over an IP address. Firmware 0.5.0+ publishes it over mDNS, and DHCP will move the address out from under any file you write it into -- the bench module took three different leases in three reboots.",
+  "_device_id": "INDUSTRIAL_MCP_ESP32_DEVICE_ID is optional and enables self-healing: if the configured host stops answering, the adapter looks the module up by name and then by subnet sweep, and adopts the new address only if it identifies itself as this device. Without it the adapter reports device_unreachable rather than guessing, because a sweep cannot tell 'my module moved' from 'some other module answered'.",
   "_transport": "This is MCP over stdio: Claude Desktop launches the process on your own machine and talks to it over stdin/stdout. Nothing reaches the module from outside your LAN. The module has no authentication, so do not put it behind a remote MCP transport without an authenticated gateway in front.",
 
   "mcpServers": {
@@ -20,7 +22,8 @@
       "args": ["--directory", "C:\\path\\to\\mcp-industrial-agent", "run", "industrial-mcp"],
       "env": {
         "INDUSTRIAL_MCP_ADAPTER": "esp32",
-        "INDUSTRIAL_MCP_ESP32_HOST": "192.168.1.69",
+        "INDUSTRIAL_MCP_ESP32_HOST": "banco-silo3.local",
+        "INDUSTRIAL_MCP_ESP32_DEVICE_ID": "banco-silo3",
         "INDUSTRIAL_MCP_ESP32_CABLES": "0,8",
         "INDUSTRIAL_MCP_ALLOW_WRITES": "false"
       }

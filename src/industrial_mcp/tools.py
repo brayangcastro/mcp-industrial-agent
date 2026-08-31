@@ -58,6 +58,36 @@ class Tools:
         """List active alerts at a plant, optionally filtered by minimum severity."""
         return self.adapter.get_active_alerts(plant_id, min_severity=min_severity)
 
+    def scan_devices(self, subnet: str | None = None) -> dict[str, Any]:
+        """Find SiloScan modules on the local network.
+
+        Read-only: probes GET /api/status and reports what answered. It
+        never edits configuration. Restricted to private address space.
+        Use when a module stopped responding and may have taken a new
+        DHCP lease.
+        """
+        from industrial_mcp.adapters import discovery
+
+        try:
+            found = discovery.scan_subnet(subnet)
+        except ValueError as exc:
+            # A refused scan is a normal answer, not a broken tool: the
+            # model asked for a range this server will not sweep.
+            return {"ok": False, "reason": str(exc), "devices": []}
+
+        return {
+            "ok": True,
+            "subnet": subnet or discovery.local_subnet(),
+            "devices": found,
+            # Say the useful thing rather than making the model infer it:
+            # 0.5.0 and later publish <device_id>.local, and a name that
+            # survives the next lease beats an address that does not.
+            "hint": (
+                "Prefer <device_id>.local in configuration over an IP — "
+                "firmware 0.5.0+ publishes it over mDNS."
+            ),
+        }
+
     # ── write tools (safety-gated) ────────────────────────────────
 
     def trigger_motor_action(
