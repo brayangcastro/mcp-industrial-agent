@@ -240,18 +240,109 @@ class Esp32Adapter:
 
     # ── write paths ───────────────────────────────────────────────
     #
-    # Firmware 0.3.0 exposes no relay or motor endpoint. Returning empty
-    # lists and a refusal is the truth; a fake success here would be the
-    # exact failure the safety layer exists to prevent.
+    # Firmware 0.4.0 added /api/relay: GET reports the level read back off
+    # the pin, POST drives it. Everything here leans on that distinction —
+    # the module publishes both what it was told and what the pin actually
+    # reads, so a driver that stopped following orders surfaces as a fault
+    # instead of as a confident "on".
+
+    def _relay(self) -> dict[str, Any] | None:
+        relay = self._get("/api/relay")
+        return relay if isinstance(relay, dict) else None
+
+    def _motor_from_relay(self, relay: dict[str, Any], plant_id: str) -> dict[str, Any]:
+        """Shape one relay as the motor record the tool layer expects.
+
+        ``state`` comes from the measured pin, not from ``commanded``. When
+        the two disagree the motor is ``fault``, which safety.py already
+        refuses to act on — that refusal is the whole point of the module
+        reporting both.
+        """
+        measured_on = relay.get("state") == "on"
+        if relay.get("mismatch"):
+            state = "fault"
+        else:
+            state = "running" if measured_on else "stopped"
+        return {
+            "id": relay.get("id"),
+            "plant_id": plant_id,
+            "silo_id": self._silo_id(),
+            "kind": "fan",
+            "state": state,
+            "commanded": relay.get("commanded"),
+            "pin": relay.get("pin"),
+        }
+
+    def _plant_id(self) -> str | None:
+        status = self._get("/api/status")
+        return status.get("device_id") if isinstance(status, dict) else None
+
+    def _silo_id(self) -> str | None:
+        """The silo this actuator belongs to, so safety.py can look up its
+        temperature before letting anyone stop the fan over hot grain."""
+        config = self._get("/api/config")
+        if not isinstance(config, dict) or config.get("silo") is None:
+            return None
+        return f"silo-{config.get('silo')}"
 
     def list_motors(self, plant_id: str, kind: str | None = None) -> list[dict[str, Any]]:
-        return []
+        relay = self._relay()
+        if relay is None:
+            # Older firmware has no such endpoint. An empty list is the
+            # truth for those builds; inventing a motor would be worse.
+            return []
+        motor = self._motor_from_relay(relay, plant_id)
+        if kind is not None and motor["kind"] != kind:
+            return []
+        return [motor]
 
     def get_motor(self, motor_id: str) -> dict[str, Any] | None:
-        return None
+        relay = self._relay()
+        if relay is None or relay.get("id") != motor_id:
+            return None
+        plant_id = self._plant_id()
+        if plant_id is None:
+            return None
+        return self._motor_from_relay(relay, plant_id)
 
     def apply_motor_action(self, motor_id: str, action: str) -> dict[str, Any]:
-        return {
-            "ok": False,
-            "reason": "SiloScan firmware 0.3.0 exposes no motor or relay endpoint",
-        }
+        """Drive the relay, then report the pin — not the command.
+
+        The success of a write is decided by reading the hardware back. A
+        POST that returned 200 while the pin stayed low is a failure, and
+        this is the layer that has to notice.
+        """
+        state = {"start": "on", "stop": "off"}.get(action)
+        if state is None:
+            return {"ok": False, "reason": f"unknown action {action!r} (known: start, stop)"}
+
+        try:
+            response = self._client.post(
+                "/api/relay", json={"id": motor_id, "state": state}
+            )
+        except httpx.HTTPError:
+            return {
+                "ok": False,
+                "reason": f"no response from SiloScan module at {self.host} while driving {motor_id}",
+            }
+
+        if response.status_code == 404:
+            return {"ok": False, "reason": f"module has no actuator named {motor_id!r}"}
+        if response.status_code >= 400:
+            return {"ok": False, "reason": f"module refused the write (HTTP {response.status_code})"}
+
+        try:
+            relay = response.json()
+        except ValueError:
+            return {"ok": False, "reason": "module returned a non-JSON response"}
+
+        if relay.get("mismatch"):
+            return {
+                "ok": False,
+                "reason": (
+                    f"commanded {relay.get('commanded')} but pin {relay.get('pin')} "
+                    f"reads {relay.get('state')} — actuator did not follow"
+                ),
+                "state": "fault",
+            }
+        return {"ok": True, "state": relay.get("state"), "commanded": relay.get("commanded")}

@@ -194,13 +194,109 @@ def test_unreachable_device_lists_nothing_rather_than_guessing() -> None:
     assert adapter.list_silos("banco-silo3") == []
 
 
-# ── write path is honestly absent ─────────────────────────────────
+# ── write path on firmware without a relay ────────────────────────
 
 
-def test_motor_action_is_refused_because_the_firmware_has_no_relay() -> None:
+def test_motor_action_is_refused_when_the_firmware_has_no_relay() -> None:
+    """Builds before 0.4.0 have no /api/relay. The 404 has to stay a
+    refusal: a write that landed nowhere must never report success."""
     result = _adapter({}).apply_motor_action("fan-1", "start")
     assert result["ok"] is False
-    assert "no motor or relay endpoint" in result["reason"]
+    assert "no actuator named" in result["reason"]
+
+
+def test_no_motors_listed_when_the_firmware_has_no_relay() -> None:
+    assert _adapter({}).list_motors("banco-silo3") == []
+
+
+# ── write path against firmware 0.4.0 ─────────────────────────────
+#
+# esp32_relay_on/off.json are recorded from device banco-silo3 running
+# 0.4.0. The mismatch payload below is the one exception in this suite
+# and says so: making the pin disagree with the command needs a jumper
+# holding GPIO5 down, so it is constructed rather than captured.
+
+
+def _relay_adapter(relay: dict[str, Any]) -> Esp32Adapter:
+    """Adapter whose /api/relay answers both GET and POST with ``relay``."""
+    routes = {
+        "/api/status": _fixture("esp32_status.json"),
+        "/api/config": _fixture("esp32_config.json"),
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/relay":
+            return httpx.Response(200, json=relay)
+        if request.url.path in routes:
+            return httpx.Response(200, json=routes[request.url.path])
+        return httpx.Response(404, json={"error": "no route"})
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="http://192.168.1.100"
+    )
+    return Esp32Adapter(host="192.168.1.100", client=client)
+
+
+def test_relay_off_is_a_stopped_motor() -> None:
+    motors = _relay_adapter(_fixture("esp32_relay_off.json")).list_motors("banco-silo3")
+    assert len(motors) == 1
+    assert motors[0]["id"] == "fan-1"
+    assert motors[0]["state"] == "stopped"
+    # safety.py needs both of these to weigh a fan against its silo.
+    assert motors[0]["plant_id"] == "banco-silo3"
+    assert motors[0]["silo_id"] == "silo-3"
+
+
+def test_relay_on_is_a_running_motor() -> None:
+    motors = _relay_adapter(_fixture("esp32_relay_on.json")).list_motors("banco-silo3")
+    assert motors[0]["state"] == "running"
+
+
+def test_starting_the_motor_reports_the_pin_not_the_command() -> None:
+    result = _relay_adapter(_fixture("esp32_relay_on.json")).apply_motor_action(
+        "fan-1", "start"
+    )
+    assert result["ok"] is True
+    assert result["state"] == "on"
+
+
+def test_a_pin_that_does_not_follow_the_command_is_a_fault() -> None:
+    """The test this endpoint exists for.
+
+    The module was told ``on`` and the pin still reads ``off``. Reporting
+    success would tell an operator a fan is running while the grain keeps
+    heating — the physical version of averaging a dead sensor as 0 °C.
+    """
+    stuck = {
+        "id": "fan-1",
+        "state": "off",       # measured at the pin
+        "commanded": "on",    # what it was told
+        "pin": 5,
+        "mismatch": True,
+    }
+    adapter = _relay_adapter(stuck)
+
+    result = adapter.apply_motor_action("fan-1", "start")
+    assert result["ok"] is False
+    assert "did not follow" in result["reason"]
+
+    # And it stays visible as a fault, so safety.py blocks the next action
+    # instead of retrying against broken hardware.
+    assert adapter.list_motors("banco-silo3")[0]["state"] == "fault"
+
+
+def test_unknown_action_is_refused_without_touching_the_device() -> None:
+    result = _relay_adapter(_fixture("esp32_relay_off.json")).apply_motor_action(
+        "fan-1", "explode"
+    )
+    assert result["ok"] is False
+    assert "unknown action" in result["reason"]
+
+
+def test_unreachable_module_does_not_raise_on_the_write_path() -> None:
+    result = _dead_adapter().apply_motor_action("fan-1", "start")
+    assert result["ok"] is False
+    assert "no response" in result["reason"]
 
 
 # ── config parsing ────────────────────────────────────────────────
