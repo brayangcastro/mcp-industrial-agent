@@ -1,94 +1,138 @@
 # Demo transcript — Claude Desktop + industrial-mcp
 
-Captured during a hot-day-in-June scenario. The model has access to
-the six tools listed below and nothing else; the user types in plain
-language and Claude orchestrates the tools without further prompting.
+**A real session, captured 2026-08-30.** Claude Desktop over stdio, the
+`esp32` adapter, and a SiloScan module on the bench: an ESP32-S3 with two
+DS18B20 probes on a OneWire mux and a relay on GPIO5 with the onboard RGB
+mirroring it — green on, red off.
+
+Every number below came off that hardware. Nothing here is a scenario.
+
+> An earlier version of this file was an invented 7-silo plant with 28 fans.
+> It was replaced rather than kept alongside: a repo arguing that models
+> should not report numbers nobody measured had no business shipping a
+> transcript of a plant that does not exist.
 
 **Tools available:** `list_plants`, `list_silos`, `get_silo_thermometry`,
 `list_motors`, `get_active_alerts`, `trigger_motor_action`.
 
 ---
 
-**User:** ¿Qué tan caliente está la planta hoy?
+## Reading
 
-**Claude:** *calls `list_plants()` → 1 plant. calls `get_active_alerts(plant_id="plant-nw-1", min_severity="warning")` → 2 alerts.*
+**User:** ¿Cómo está la temperatura de los silos?
 
-> Hay dos silos con temperatura elevada en la planta del noroeste:
-> - **silo-2** — temperatura máxima 31.4°C (warning)
-> - **silo-7** — temperatura máxima 32.1°C (critical)
+**Claude:** *calls `list_plants()` → `banco-silo3`. calls `list_silos()` →
+`silo-3`. calls `get_silo_thermometry("silo-3")` → two live OneWire reads.*
+
+> Silo-3 (módulo banco-silo3) — lectura de hace un momento:
 >
-> ¿Quieres que revise el estado de los ventiladores asociados o que te muestre el detalle por capas?
-
----
-
-**User:** Sí, dime qué ventilador puede ayudar al silo-7.
-
-**Claude:** *calls `list_motors(plant_id="plant-nw-1", kind="fan")` → 28 fans. filters by silo_id="silo-7".*
-
-> Silo-7 tiene 4 ventiladores: `fan-7-1`, `fan-7-2`, `fan-7-3`, `fan-7-4`. Los cuatro están detenidos (`stopped`).
+> - Promedio: 27.25 °C
+> - Mín: 26.5 °C / Máx: 28 °C
+> - 2 cables, 2 sensores, todos válidos, ninguno en falla
+> - Sin alertas activas en la planta
 >
-> Con el ambiente actual a 28°C y el silo a 32.1°C, encender uno o dos podría empezar a enfriar la masa por la parte inferior. ¿Quieres que verifique si es seguro encender `fan-7-1`?
+> Todo estable: solo 1.5 °C de diferencia entre el punto más frío y el más
+> caliente. No reporta porcentaje de llenado ni capacidad (vienen en `null`),
+> así que si necesitas ese dato habría que revisarlo por otro lado.
 
----
+Verified against the device in the same minute, outside the MCP path:
 
-**User:** Sí, evalúalo en modo dry run.
-
-**Claude:** *calls `trigger_motor_action(motor_id="fan-7-1", action="start", dry_run=True)`.*
-
-```json
-{
-  "phase": "dry_run",
-  "motor_id": "fan-7-1",
-  "current_state": "stopped",
-  "requested_action": "start",
-  "would_execute": true,
-  "preconditions": [
-    { "name": "motor_state_known",  "passed": true,  "detail": "motor state = 'stopped'" },
-    { "name": "no_active_fault",    "passed": true,  "detail": "motor not in fault state" },
-    { "name": "action_meaningful",  "passed": true,  "detail": "start requested while motor is stopped" }
-  ],
-  "warnings": [],
-  "next_step": "set dry_run=False, provide operator_id and reason"
-}
+```
+GET /api/probe?i=0 → {"estado":"valid","temp":26.5,"rom":"2839a47997140315"}
+GET /api/probe?i=8 → {"estado":"valid","temp":28,  "rom":"28142007d6013cf6"}
 ```
 
-> El simulacro pasa las tres precondiciones de seguridad y no hay
-> advertencias activas. Para encenderlo de verdad necesitas un
-> `operator_id` y una razón corta — y el servidor tiene que estar
-> arrancado con `INDUSTRIAL_MCP_ALLOW_WRITES=true`. ¿Lo procedo o
-> esperas a confirmación del operador?
+The min and max the model spoke are the two physical probes, one for one.
+
+Note what it did with `capacity_t` and `fill_pct`. The module measures grain
+temperature, not level, so the adapter returns `null` — and the model passed
+that on as "you'd have to check elsewhere" instead of reporting an empty silo.
+`0` there would have been a plausible, wrong answer.
 
 ---
 
-**User:** Espera, mejor primero apaga `fan-2-1` que está corriendo de más.
+## Writing — the gate refusing first
 
-**Claude:** *calls `trigger_motor_action(motor_id="fan-2-1", action="stop", dry_run=True)`.*
+**User:** apaga ventilador
 
-```json
-{
-  "phase": "dry_run",
-  "motor_id": "fan-2-1",
-  "current_state": "running",
-  "requested_action": "stop",
-  "would_execute": true,
-  "preconditions": [
-    { "name": "motor_state_known",  "passed": true, "detail": "motor state = 'running'" },
-    { "name": "no_active_fault",    "passed": true, "detail": "motor not in fault state" },
-    { "name": "action_meaningful",  "passed": true, "detail": "stop requested while motor is running" }
-  ],
-  "warnings": [
-    "silo silo-2 is at 31.4°C — stopping fan may allow temperature rise; recommend operator review"
-  ]
-}
+**Claude:** *calls `list_motors()` → one fan. calls
+`trigger_motor_action(motor_id="fan-1", action="stop")` — dry run by default.*
+
+> Encontré un solo ventilador en el módulo banco-silo3:
+>
+> **fan-1** — silo-3, estado: **en marcha** (pin 5)
+>
+> Hice la simulación del paro y pasa todas las precondiciones, pero salió una
+> advertencia: **silo-3 está a 28.0 °C**, y detener el ventilador puede dejar
+> que la temperatura suba.
+>
+> Para ejecutar el paro de verdad necesito dos cosas que quedan en el registro
+> de auditoría: tu ID de operador, y un motivo breve. Confírmame que sigo
+> adelante con fan-1 y me pasas el ID, y lo detengo.
+
+**The relay did not move.** Nobody told the model to be careful — it was asked
+to turn the fan off and it came back asking for credentials, because the tool
+contract left no other path. The `state: "en marcha"` it reported was read off
+the pin, not from the last command sent.
+
+---
+
+## Writing — execution
+
+**User:** Apaga el ventilador fan-1 de verdad. Usa `dry_run=False`,
+`operator_id` "brayan" y como razón "prueba del relé".
+
+**Claude:** *calls `trigger_motor_action(motor_id="fan-1", action="stop",
+dry_run=False, operator_id="brayan", reason="prueba del relé")`.*
+
+> Listo. fan-1 detenido — comando enviado y registrado en el log de auditoría.
+> Estado actual: `off`, comandado `off`.
+>
+> Sigue en pie la advertencia del silo-3 a 28.0 °C: sin ventilación la
+> temperatura puede subir.
+
+The LED went green → red inside the HTTP round trip. Two more cycles followed
+(`prendelo`, then `apágalo`), and after the third the model volunteered
+something nobody asked for:
+
+> Llevamos tres ciclos de arranque/paro en pocos minutos, lo cual desgasta más
+> el relé y el motor que la operación normal. Si estás probando el relé, quizá
+> convenga espaciar los ciclos.
+
+---
+
+## What the audit log kept
+
+```
+20:22:40  motor.stop   fan-1  applied  actor=brayan  reason: prueba del relé
+          WARNING: silo silo-3 is at 28.0°C — stopping fan may allow
+                   temperature rise; recommend operator review
+20:23:03  motor.start  fan-1  applied  actor=brayan  reason: fin de prueba del relé
+20:23:35  motor.stop   fan-1  applied  actor=brayan  reason: paro manual solicitado
+          WARNING: silo silo-3 is at 28.0°C — …
 ```
 
-> Técnicamente sí se puede detener, pero hay una advertencia: silo-2
-> está a 31.4°C — si lo apagas ahora la temperatura puede subir.
-> ¿Aún así proceder, o prefieres dejarlo correr otro rato?
+Three executed actions. The dry run is not there, because dry runs are not
+interesting and would dilute the signal.
+
+**The warning is in the record, not just on the screen.** Someone reading this
+file after the fact can see that the operator was told the grain was warm and
+stopped the fan anyway. That is why advisory warnings are structured data
+rather than prose in a reply.
 
 ---
 
-The point of this transcript is not that the model is clever — it's
-that **every step is auditable, every action is gated, and the user
-sees exactly which tools were called and why.** That is the model
-deploying into a factory floor without anyone losing sleep.
+## The honest limits of this demo
+
+- **`fan-1` is a relay driving an LED**, not a three-phase fan. No inertia, no
+  inrush, no interlocks, no run-feedback contact.
+- **The server was started with `INDUSTRIAL_MCP_ALLOW_WRITES=true`** for this
+  session. That is the one layer a prompt cannot reach, and it was deliberately
+  opened. Read-only is the default for a reason.
+- **The `mismatch` path never fired.** The adapter reports a stuck pin as
+  `fault`, and that branch is unit-tested but has not been triggered on real
+  hardware.
+
+Full evidence, including what remains unverified:
+[`docs/hardware-verification.md`](../docs/hardware-verification.md)
+([español](../docs/verificacion-hardware.md)).
