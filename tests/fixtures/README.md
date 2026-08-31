@@ -42,9 +42,18 @@ one cold, 16 degrees apart and both valid. Their average, 23.5 °C, resembles
 neither — which is the case the snapshot's `min_temp_c` / `max_temp_c` exist to
 keep visible.
 
-There is no `esp32_relay_mismatch.json`, and the absence is deliberate. The case
-where the pin disagrees with the command needs a jumper holding GPIO5 down while
-the firmware drives it high, and that has not been done. The test suite covers
-that branch with a payload constructed inline in `test_esp32_adapter.py`, which
-says so at the point of use — a constructed payload is fine as long as nothing
-in this folder implies it came off a device.
+There is no `esp32_relay_mismatch.json`, and the absence is deliberate. The test
+suite covers that branch with a payload constructed inline in
+`test_esp32_adapter.py`, which says so at the point of use — a constructed
+payload is fine as long as nothing in this folder implies it came off a device.
+
+⚠️ **This file used to say the capture needed "a jumper holding GPIO5 down while
+the firmware drives it high." Do not do that** — shorting a driven-HIGH ESP32-S3
+output to ground draws far past the 40 mA per-pad maximum, and any resistor big
+enough to be safe cannot pull the pin down anyway. It was also measuring the
+wrong failure: reading back your own output only catches a dead GPIO driver, not
+a relay that failed to close.
+
+Firmware 0.6.0 adds a separate feedback input (`PIN_RELAY_FB`), so the fault is
+produced by **removing a wire** instead. Once that is flashed and the capture is
+real, this fixture will exist and this paragraph goes away.

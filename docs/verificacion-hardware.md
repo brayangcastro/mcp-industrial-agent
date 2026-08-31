@@ -289,11 +289,30 @@ ventilador trifásico real trae interlocks, contactos de retroalimentación de
 marcha y requisitos de categoría de paro que nada de esto atiende.
 
 **La ruta de `mismatch` no se ha disparado en hardware.** `state != commanded`
-es la rama que convierte un pin atorado en un `fault`, y solo la cubre un
-payload construido en la suite de pruebas. Forzarla de verdad necesita un
-jumper sosteniendo GPIO5 en bajo mientras el firmware lo ordena en alto. Hasta
-que eso se haga, la detección está *implementada y con pruebas unitarias, no
-demostrada*.
+es la rama que convierte un actuador atorado en un `fault`, y solo la cubre un
+payload construido en la suite de pruebas. Sigue *implementada y con pruebas
+unitarias, no demostrada*.
+
+> ⚠️ **Versiones anteriores de este documento decían que se forzara con un
+> jumper sosteniendo GPIO5 en bajo mientras el firmware lo ordena en alto. No lo
+> hagas.** Una salida del ESP32-S3 en HIGH tiene una resistencia de encendido de
+> decenas de ohms, así que aterrizarla pasa muy por encima del máximo absoluto
+> de 40 mA por pad. Y una resistencia lo bastante grande para ser segura no
+> alcanza a bajar el pin: gana el driver. La instrucción era peligrosa e inútil
+> a la vez.
+>
+> El problema de fondo es que medía lo equivocado. Leer de vuelta la propia
+> salida solo detecta un **driver de GPIO muerto**. Lo que falla en una planta es
+> que el relevador no cierre, que la bobina se abra, que el contactor no pegue —
+> y en todos esos casos el pin de salida sigue leyendo `on` mientras el
+> ventilador está parado.
+>
+> La forma correcta es una **entrada de realimentación** aparte: un pin acciona,
+> otro lee si el actuador siguió. Así la falla se produce **quitando un cable**,
+> sin cortocircuitar nada. Eso es lo que implementa el firmware 0.6.0
+> (`PIN_RELAY` acciona, `PIN_RELAY_FB` lee, y `state` sale de la realimentación),
+> y es la manera honesta de cerrar este hueco. **Aún sin flashear ni verificar**
+> al momento de escribir esto — por eso está aquí y no en *Qué se verificó*.
 
 **Solo existe un actuador.** `RELAY_ID` es una constante en tiempo de
 compilación, así que el módulo responde exactamente por `fan-1`. Múltiples

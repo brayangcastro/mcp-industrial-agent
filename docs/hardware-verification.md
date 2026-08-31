@@ -283,10 +283,29 @@ brings interlocks, run-feedback contacts and stop-category requirements that
 none of this addresses.
 
 **The mismatch path has not been triggered on hardware.** `state != commanded`
-is the branch that turns a stuck pin into a `fault`, and it is covered only by a
-constructed payload in the test suite. Forcing it for real needs a jumper
-holding GPIO5 down while the firmware commands it high. Until that is done, the
-detection is *implemented and unit-tested, not demonstrated*.
+is the branch that turns a stuck actuator into a `fault`, and it is covered only
+by a constructed payload in the test suite. It remains *implemented and
+unit-tested, not demonstrated*.
+
+> ⚠️ **Earlier revisions of this document told you to force it with a jumper
+> holding GPIO5 down while the firmware drove it high. Do not do that.** An
+> ESP32-S3 output in its HIGH state has an on-resistance in the tens of ohms, so
+> shorting it to ground draws well past the 40 mA absolute maximum for a single
+> pad. And a resistor large enough to be safe cannot pull the pin down at all —
+> the driver simply wins. The instruction was both dangerous and ineffective.
+>
+> The deeper problem is that it was measuring the wrong thing. Reading back your
+> own output pin only detects a **dead GPIO driver**. What fails in a plant is
+> the relay not closing, the coil going open, the contactor not pulling in — and
+> in every one of those the output pin still reads `on` while the fan sits
+> still.
+>
+> The correct shape is a separate **feedback input**: one pin drives, another
+> reads whether the actuator followed. Then the fault is produced by removing a
+> wire, with nothing shorted. That is what firmware 0.6.0 implements
+> (`PIN_RELAY` drives, `PIN_RELAY_FB` reads, `state` comes from the feedback),
+> and it is the honest way to close this gap. **Not yet flashed or verified at
+> the time of writing** — it is listed here, not in *What was verified*.
 
 **Only one actuator exists.** `RELAY_ID` is a compile-time constant, so the
 module answers for exactly `fan-1`. Multiple relays would need the id to become

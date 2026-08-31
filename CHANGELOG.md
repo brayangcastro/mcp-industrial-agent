@@ -60,6 +60,13 @@ with DS18B20 probes on a OneWire mux and a relay on GPIO5.
 
 ### Fixed
 
+- **Dangerous instruction removed from the docs.** Four files told readers to
+  trigger a mismatch with "a jumper holding GPIO5 down while the firmware
+  drives it high". Shorting a driven-HIGH ESP32-S3 output to ground draws well
+  past the 40 mA per-pad maximum, and a resistor large enough to be safe cannot
+  pull the pin down at all. It was also the wrong measurement: reading back your
+  own output detects a dead GPIO driver, not a relay that failed to close.
+  Replaced with the feedback-input approach.
 - An unknown `INDUSTRIAL_MCP_ADAPTER` value raises at startup instead of
   silently falling back to the mock. Serving fake data when someone asked for
   the plant is worse than refusing to start.
@@ -73,8 +80,9 @@ Carried here deliberately rather than left to the commit log:
 - The verified actuator is a **logic-level GPIO with an LED**, not a motor.
   Inrush current, interlocks and run-feedback contacts are untouched.
 - The `mismatch` → `fault` branch is implemented and unit-tested but has
-  **never been triggered on hardware**; forcing it needs a jumper holding
-  GPIO5 down while the firmware drives it high.
+  **never been triggered on hardware**. Firmware 0.6.0 adds a separate feedback
+  input so the fault can be produced by removing a wire; that firmware is not
+  yet flashed or verified.
 - Only one actuator exists (`fan-1`); `RELAY_ID` is a compile-time constant in
   the firmware.
 - The module has **no authentication**. Acceptable on a lab LAN over stdio,

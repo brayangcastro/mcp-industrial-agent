@@ -214,8 +214,10 @@ def test_no_motors_listed_when_the_firmware_has_no_relay() -> None:
 #
 # esp32_relay_on/off.json are recorded from device banco-silo3 running
 # 0.4.0. The mismatch payload below is the one exception in this suite
-# and says so: making the pin disagree with the command needs a jumper
-# holding GPIO5 down, so it is constructed rather than captured.
+# and says so: it is constructed rather than captured, because on 0.4.0
+# there was no safe way to make the pin disagree with the command.
+# Firmware 0.6.0 adds a feedback input so the fault can be produced by
+# pulling a wire; once that is captured, this becomes a fixture.
 
 
 def _relay_adapter(relay: dict[str, Any]) -> Esp32Adapter:
