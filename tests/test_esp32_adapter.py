@@ -1,7 +1,8 @@
 """Esp32Adapter against recorded responses from a real SiloScan module.
 
 The fixtures in ``tests/fixtures/`` were captured from device
-``banco-silo3`` (firmware ``agrostar-s3-onewire`` 0.3.0) on 2026-08-28.
+``banco-silo3`` (firmware ``agrostar-s3-onewire``): the sensor ones on
+2026-08-28 against 0.3.0, the relay ones on 2026-08-30 against 0.4.0.
 See that folder's README for which are recorded and which are derived.
 
 The test that matters most is ``test_faulted_sensor_is_not_averaged_as_zero``:

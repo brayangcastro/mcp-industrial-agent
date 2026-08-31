@@ -1,7 +1,8 @@
 # ESP32 fixtures
 
-Responses from a real SiloScan module (`agrostar-s3-onewire` 0.3.0, device
-`banco-silo3`) captured on 2026-08-28 over the LAN.
+Responses from a real SiloScan module (`agrostar-s3-onewire`, device
+`banco-silo3`) captured over the LAN: the sensor captures on 2026-08-28 against
+firmware 0.3.0, the relay captures on 2026-08-30 against 0.4.0.
 
 | File | Source | Notes |
 |---|---|---|
@@ -15,6 +16,8 @@ Responses from a real SiloScan module (`agrostar-s3-onewire` 0.3.0, device
 | `esp32_probe_i8_populated.json` | **recorded** | `GET /api/probe?i=8`, one DS18B20 chilled in a glass — 15.5 °C |
 | `esp32_last_populated.json` | **recorded** | `GET /api/last` with both cables present |
 | `esp32_probe_fault.json` | **recorded** | `GET /api/probe?i=0` with the data line briefly grounded — ROM enumerates, scratchpad fails CRC, `estado: fault` / `temp: null` |
+| `esp32_relay_off.json` | **recorded** | `GET /api/relay` with GPIO5 low — `state` is the pin, `commanded` is the order |
+| `esp32_relay_on.json` | **recorded** | `GET /api/relay` with GPIO5 high |
 
 **Every fixture here is recorded from hardware. None are derived.** The fault
 capture took 451 polls over 98 seconds of wiggling one connector; it is the
@@ -38,3 +41,10 @@ The two populated captures were taken simultaneously with one probe warm and
 one cold, 16 degrees apart and both valid. Their average, 23.5 °C, resembles
 neither — which is the case the snapshot's `min_temp_c` / `max_temp_c` exist to
 keep visible.
+
+There is no `esp32_relay_mismatch.json`, and the absence is deliberate. The case
+where the pin disagrees with the command needs a jumper holding GPIO5 down while
+the firmware drives it high, and that has not been done. The test suite covers
+that branch with a payload constructed inline in `test_esp32_adapter.py`, which
+says so at the point of use — a constructed payload is fine as long as nothing
+in this folder implies it came off a device.

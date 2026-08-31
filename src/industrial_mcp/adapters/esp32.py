@@ -6,12 +6,18 @@ exists: the round it uploads carries temperatures, but the per-channel
 classification (``valid`` / ``open`` / ``fault``) is computed on the
 module and is what keeps a dead probe from being read as a cold one.
 
-Firmware: ``agrostar-s3-onewire`` 0.3.0 — DS18B20 chains behind a 16-way
-mux, one OneWire rail. Endpoints used:
+Firmware: ``agrostar-s3-onewire`` — DS18B20 chains behind a 16-way mux,
+one OneWire rail. Endpoints used:
 
 ``GET /api/status``     device health, firmware, silo
 ``GET /api/config``     configured silo and alert threshold
 ``GET /api/probe?i=N``  live read of one cable: per-sensor estado + temp
+``GET /api/relay``      actuator level read back off the pin (0.4.0+)
+``POST /api/relay``     drive the actuator (0.4.0+)
+
+Builds before 0.4.0 have no relay endpoint. The write path handles that
+by staying a refusal — ``list_motors`` comes back empty and
+``apply_motor_action`` reports the 404 rather than claiming success.
 
 The firmware already refuses to lie: ``temp`` is ``null`` unless the
 channel classified as ``CH_OK``, and an 85.00 °C power-on-reset reading

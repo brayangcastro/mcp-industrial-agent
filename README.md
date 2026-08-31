@@ -229,25 +229,36 @@ URLs, topic structures, and ACLs you can publish publicly are usually
 zero. The `PlantAdapter` Protocol is the extension point.
 
 **So the safety gate is proven against real equipment?**
-No, and this is the honest limit. The verified part is the **read**
-path. The module's firmware exposes no relay or motor endpoint, so
-`list_motors` returns `[]` and `apply_motor_action` refuses with a
-stated reason. The three-layer write gate still guards a dictionary in
-memory. Wiring it to a physical relay is the next piece of work.
+Against a real **pin**, yes. Firmware 0.4.0 exposes `/api/relay`, and
+the four-step escalation was run against it: dry run left the pin low,
+a call without `operator_id` was rejected with the pin low, a read-only
+server rejected it with the pin low, and only the fourth call drove it
+high. Be precise about the limit, though — that is a logic-level GPIO
+with an LED on it, not a three-phase fan with inrush current and
+interlocks. What was proven is that the gate stops a real actuator from
+moving; motor sequencing is a different problem.
+
+**How do you know the relay actually switched?**
+Because the module is asked, not trusted. `GET /api/relay` reports the
+level read back off the pad next to the command it was given, and
+`apply_motor_action` decides success from the reading. A 200 response
+with the pin still low comes back as a fault. An actuator that only
+repeats the order it was given is not telemetry, it is an echo.
 
 ---
 
 ## Status
 
-Read path verified against hardware; write path not yet. Not 1.0 —
-the shapes are stable, but expect breaking changes in non-public APIs.
+Read and write paths both verified against hardware. Not 1.0 — the
+shapes are stable, but expect breaking changes in non-public APIs.
 
 | Area | State |
 | --- | --- |
 | `mock` adapter | Shipped, deterministic, used by CI |
 | `esp32` adapter, read path | **Verified against a live module** — [evidence](docs/hardware-verification.md) |
-| Safety gate + audit log | Implemented and tested; **still guarding in-memory state** |
-| Write path against real hardware | Not done |
+| Safety gate + audit log | **Verified against a physical pin** — dry run and both rejections left it low |
+| Actuator fault detection (`mismatch`) | Implemented and unit-tested; **not yet triggered on hardware** |
+| Real motor (inrush, interlocks, run feedback) | Not attempted — the verified actuator is a GPIO with an LED |
 | MQTT / OPC UA adapters | Not started |
 
 ## Author

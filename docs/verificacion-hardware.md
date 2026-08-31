@@ -27,7 +27,7 @@ misma familia, y el adapter se escribió contra el que existe:
 
 | | |
 |---|---|
-| Firmware | `agrostar-s3-onewire` 0.3.0, dispositivo `banco-silo3`, silo 3 |
+| Firmware | `agrostar-s3-onewire`, dispositivo `banco-silo3`, silo 3. Camino de lectura verificado en **0.3.0**; **0.4.0** agregó `/api/relay` para el de escritura |
 | MCU | ESP32-S3 (serial USB CH343) |
 | Sensado | DS18B20 por OneWire detrás de un mux de 16 canales, **VDD externo** (no parásito) |
 | Sondas | 2 × DS18B20 en canales 0 y 8 del mux, ROMs `2839a47997140315` y `28142007d6013cf6` |
@@ -106,7 +106,49 @@ uno. Log del host:
 14:21:07 [localMcpBridge] announcing industrial: 6 tool(s)
 ```
 
-### 4. Las negativas se sostienen cuando el módulo está ciego
+### 4. La compuerta de seguridad sostuvo un pin físico (2026-08-30)
+
+El firmware 0.4.0 agregó `/api/relay`: `POST` maneja GPIO5, `GET` reporta el
+nivel **leído de vuelta del pad**, junto con la orden que recibió y un flag
+`mismatch`. El RGB integrado lo refleja para la cámara — verde encendido, rojo
+apagado — y queda deliberadamente fuera de la verificación, porque un WS2812B
+es de solo escritura y no se puede leer.
+
+Las tres capas, corridas en orden contra ese pin:
+
+| Paso | Resultado | Pin después |
+|---|---|---|
+| 1. `trigger_motor_action` con defaults | `phase: dry_run` | `off` |
+| 2. `dry_run=False`, sin `operator_id` | `phase: rejected` | `off` |
+| 3. operador + razón, servidor en solo lectura | `phase: rejected_server_policy` | `off` |
+| 4. las cuatro condiciones cumplidas | `phase: executed` | **`on`** |
+
+y una línea en el audit log, solo para la llamada que sí ocurrió:
+
+```json
+{"ts": 1788144400.76, "actor": "op-42", "action": "motor.start",
+ "target": "fan-1", "outcome": "applied",
+ "details": {"reason": "demo tres capas", "warnings": []}}
+```
+
+**La regla consultiva disparó contra una temperatura medida.** Pedir *detener*
+el ventilador regresó:
+
+```
+silo silo-3 is at 28.0°C — stopping fan may allow temperature rise;
+recommend operator review
+```
+
+Esa regla existe desde el primer commit. Hasta ahora el número que traía salía
+de un hash; el 28.0 salió de un DS18B20.
+
+**Lo que el adapter se niega a hacer:** `apply_motor_action` decide el éxito
+leyendo el pin, no porque el módulo acepte el POST. Una respuesta 200 con el
+pin todavía en bajo regresa `ok: False` con `state: "fault"` — decirle a un
+operador que un ventilador está corriendo mientras el grano se sigue
+calentando es la versión física de promediar un sensor muerto como 0 °C.
+
+### 5. Las negativas se sostienen cuando el módulo está ciego
 
 Sin sonda conectada, el mismo adapter regresa lo contrario, y eso también es
 correcto:
@@ -209,13 +251,25 @@ que se pueda confiar en un adapter contra él.
 
 Cosas que se creen pero no se demostraron. Están separadas aquí a propósito.
 
-**La ruta de escritura.** El firmware 0.3.0 no expone endpoint de relevador ni
-de motor. `list_motors` regresa `[]` y `apply_motor_action` se niega con una
-razón explícita. Así que la compuerta de seguridad de tres capas — `dry_run`
-por defecto, `operator_id` + `reason`, `INDUSTRIAL_MCP_ALLOW_WRITES` — sigue
-protegiendo un diccionario en memoria, exactamente igual que antes. **Nada en
-este documento debe leerse como "la compuerta de seguridad se verificó contra
-hardware físico."** No fue así. Ese es el siguiente trabajo.
+**Un relevador no es un motor.** GPIO5 maneja un pin de nivel lógico con el
+LED integrado reflejándolo. No se ha conmutado nada con inercia, corriente de
+arranque o un térmico de sobrecarga. La compuerta se verificó contra *un
+actuador que se mueve*, que es la parte que antes faltaba — pero secuenciar un
+ventilador trifásico real trae interlocks, contactos de retroalimentación de
+marcha y requisitos de categoría de paro que nada de esto atiende.
+
+**La ruta de `mismatch` no se ha disparado en hardware.** `state != commanded`
+es la rama que convierte un pin atorado en un `fault`, y solo la cubre un
+payload construido en la suite de pruebas. Forzarla de verdad necesita un
+jumper sosteniendo GPIO5 en bajo mientras el firmware lo ordena en alto. Hasta
+que eso se haga, la detección está *implementada y con pruebas unitarias, no
+demostrada*.
+
+**Solo existe un actuador.** `RELAY_ID` es una constante en tiempo de
+compilación, así que el módulo responde exactamente por `fan-1`. Múltiples
+relevadores necesitarían que el id se volviera un lookup, y `POST` hoy regresa
+404 para cualquier otra cosa — que es la falla correcta, pero no es una
+flotilla.
 
 **Un bus aterrizado puede reportar 0.0 °C como válido.** Leído del código, no
 medido. `owReadSensor` acepta un scratchpad cuando `crc8(sp,8) == sp[8]`. Un

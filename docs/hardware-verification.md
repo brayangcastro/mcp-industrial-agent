@@ -26,7 +26,7 @@ family, and the adapter was written against the one that exists:
 
 | | |
 |---|---|
-| Firmware | `agrostar-s3-onewire` 0.3.0, device `banco-silo3`, silo 3 |
+| Firmware | `agrostar-s3-onewire`, device `banco-silo3`, silo 3. Read path verified on **0.3.0**; **0.4.0** added `/api/relay` for the write path |
 | MCU | ESP32-S3 (CH343 USB serial) |
 | Sensing | DS18B20 on OneWire behind a 16-channel mux, **external VDD** (not parasitic) |
 | Probes | 2 × DS18B20 on mux channels 0 and 8, ROMs `2839a47997140315` and `28142007d6013cf6` |
@@ -103,7 +103,49 @@ log:
 14:21:07 [localMcpBridge] announcing industrial: 6 tool(s)
 ```
 
-### 4. The refusals hold when the module is blind
+### 4. The safety gate held a physical pin (2026-08-30)
+
+Firmware 0.4.0 added `/api/relay`: `POST` drives GPIO5, `GET` reports the level
+**read back off the pad**, alongside the command it was given and a `mismatch`
+flag. The onboard RGB mirrors it for the camera — green on, red off — and is
+deliberately outside the check, because a WS2812B is write-only and cannot be
+read.
+
+The three layers, run in order against that pin:
+
+| Step | Result | Pin afterwards |
+|---|---|---|
+| 1. `trigger_motor_action` with defaults | `phase: dry_run` | `off` |
+| 2. `dry_run=False`, no `operator_id` | `phase: rejected` | `off` |
+| 3. operator + reason, server read-only | `phase: rejected_server_policy` | `off` |
+| 4. all four conditions met | `phase: executed` | **`on`** |
+
+and one line in the audit log, only for the call that happened:
+
+```json
+{"ts": 1788144400.76, "actor": "op-42", "action": "motor.start",
+ "target": "fan-1", "outcome": "applied",
+ "details": {"reason": "demo tres capas", "warnings": []}}
+```
+
+**The advisory rule fired against a measured temperature.** Asking to *stop*
+the fan returned:
+
+```
+silo silo-3 is at 28.0°C — stopping fan may allow temperature rise;
+recommend operator review
+```
+
+That rule has existed since the first commit. Until now the number in it came
+out of a hash; 28.0 came off a DS18B20.
+
+**What the adapter refuses to do:** `apply_motor_action` decides success by
+reading the pin, not by the module accepting the POST. A 200 response with the
+pin still low comes back `ok: False` with `state: "fault"` — telling an operator
+a fan is running while the grain keeps heating is the physical version of
+averaging a dead sensor as 0 °C.
+
+### 5. The refusals hold when the module is blind
 
 With no probe attached, the same adapter returns the opposite, and that is also
 correct:
@@ -205,13 +247,23 @@ adapter can be trusted against it.
 
 Things believed but not demonstrated. They are separated here on purpose.
 
-**The write path.** Firmware 0.3.0 exposes no relay or motor endpoint.
-`list_motors` returns `[]` and `apply_motor_action` refuses with a stated
-reason. So the three-layer safety gate — `dry_run` default, `operator_id` +
-`reason`, `INDUSTRIAL_MCP_ALLOW_WRITES` — is still protecting a dictionary in
-memory, exactly as before. **Nothing in this document should be read as
-"the safety gate was verified against physical hardware."** It was not. That
-is the next piece of work.
+**A relay is not a motor.** GPIO5 drives a logic-level pin with the onboard LED
+mirroring it. Nothing with inertia, inrush current, or a thermal overload has
+been switched. The gate was verified against *an actuator that moves*, which is
+the part that was previously missing — but sequencing a real three-phase fan
+brings interlocks, run-feedback contacts and stop-category requirements that
+none of this addresses.
+
+**The mismatch path has not been triggered on hardware.** `state != commanded`
+is the branch that turns a stuck pin into a `fault`, and it is covered only by a
+constructed payload in the test suite. Forcing it for real needs a jumper
+holding GPIO5 down while the firmware commands it high. Until that is done, the
+detection is *implemented and unit-tested, not demonstrated*.
+
+**Only one actuator exists.** `RELAY_ID` is a compile-time constant, so the
+module answers for exactly `fan-1`. Multiple relays would need the id to become
+a lookup, and `POST` currently 404s on anything else — which is the right
+failure, but it is not a fleet.
 
 **A grounded bus may report 0.0 °C as valid.** Read from the code, not
 measured. `owReadSensor` accepts a scratchpad when `crc8(sp,8) == sp[8]`. A
