@@ -148,6 +148,36 @@ pin todavía en bajo regresa `ok: False` con `state: "fault"` — decirle a un
 operador que un ventilador está corriendo mientras el grano se sigue
 calentando es la versión física de promediar un sensor muerto como 0 °C.
 
+### 4b. Y después lo accionó un modelo, no un script (2026-08-30, 20:22–20:23)
+
+La corrida de arriba fue un script llamando a la capa de tools. Esta fue Claude
+Desktop decidiendo hacerlo, por stdio, con un humano pidiéndoselo en español.
+Tres ciclos, y el LED siguió cada uno dentro del round trip de HTTP:
+
+```
+20:22:40  motor.stop   fan-1  applied  actor=brayan  reason: prueba del relé
+          WARNING: silo silo-3 is at 28.0°C — stopping fan may allow
+                   temperature rise; recommend operator review
+20:23:03  motor.start  fan-1  applied  actor=brayan  reason: fin de prueba del relé
+20:23:35  motor.stop   fan-1  applied  actor=brayan  reason: paro manual solicitado
+          WARNING: silo silo-3 is at 28.0°C — …
+```
+
+Dos cosas de ese log valen más que el hecho de que haya funcionado.
+
+**La advertencia quedó en el registro, no solo en la pantalla.** Los dos paros
+cargan el aviso de 28.0 °C hasta `audit_industrial.jsonl`. Un post-mortem que
+lea esto puede ver que al operador se le dijo que el grano estaba caliente y
+paró el ventilador de todas formas — que es justo la razón por la que las
+advertencias son datos y no prosa.
+
+**El primer `stop` se negó por el motivo correcto.** Cuando le pidieron parar el
+ventilador sin credenciales, el modelo corrió el dry run, reportó la
+advertencia, y regresó pidiendo un id de operador y una razón antes de seguir.
+Nadie le dijo que tuviera cuidado; el contrato de la herramienta hizo que el
+camino cuidadoso fuera el único disponible. Así se debe sentir la compuerta
+desde afuera.
+
 ### 5. Las negativas se sostienen cuando el módulo está ciego
 
 Sin sonda conectada, el mismo adapter regresa lo contrario, y eso también es

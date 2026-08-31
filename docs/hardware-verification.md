@@ -145,6 +145,34 @@ pin still low comes back `ok: False` with `state: "fault"` — telling an operat
 a fan is running while the grain keeps heating is the physical version of
 averaging a dead sensor as 0 °C.
 
+### 4b. And then a model drove it, not a script (2026-08-30, 20:22–20:23)
+
+The run above was a script calling the tool layer. This one was Claude Desktop
+deciding to, over stdio, with a human asking in Spanish. Three cycles, and the
+LED tracked each one within the HTTP round trip:
+
+```
+20:22:40  motor.stop   fan-1  applied  actor=brayan  reason: prueba del relé
+          WARNING: silo silo-3 is at 28.0°C — stopping fan may allow
+                   temperature rise; recommend operator review
+20:23:03  motor.start  fan-1  applied  actor=brayan  reason: fin de prueba del relé
+20:23:35  motor.stop   fan-1  applied  actor=brayan  reason: paro manual solicitado
+          WARNING: silo silo-3 is at 28.0°C — …
+```
+
+Two things in that log are worth more than the fact that it worked.
+
+**The warning is in the record, not just on the screen.** Both stops carry the
+28.0 °C advisory into `audit_industrial.jsonl`. A post-mortem reading this can
+tell that the operator was told the grain was warm and stopped the fan anyway —
+which is the entire reason advisory warnings are data rather than prose.
+
+**The first `stop` was refused for the right reason.** Asked to stop the fan
+with no credentials, the model ran the dry run, reported the warning, and came
+back asking for an operator id and a reason before it would proceed. Nobody
+prompted it to be careful; the tool's contract made the careful path the only
+one available. That is what the gate is supposed to feel like from the outside.
+
 ### 5. The refusals hold when the module is blind
 
 With no probe attached, the same adapter returns the opposite, and that is also
