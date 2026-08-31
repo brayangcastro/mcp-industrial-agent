@@ -18,6 +18,16 @@ of Python, using [FastMCP][fastmcp]. Default mode is read-only and
 ships with a deterministic mock adapter modeling a 7-silo grain
 storage facility, so it runs in CI with no infrastructure.
 
+The read path is **verified end to end against real hardware**: an
+ESP32-S3 with DS18B20 probes on a OneWire mux, answering a model's
+questions about grain temperature over the LAN. Warming one probe by
+hand moved `max_temp_c` from 28.0 to 31.0 — and dropped the *average*,
+because the other probe was in cold water. That measurement is why
+these tools return `min`, `max`, and `faulted_sensors` instead of one
+reassuring number. Evidence, including what is **not** verified:
+[`docs/hardware-verification.md`](docs/hardware-verification.md)
+([español](docs/verificacion-hardware.md)).
+
 [fastmcp]: https://github.com/modelcontextprotocol/python-sdk
 
 ---
@@ -45,7 +55,7 @@ storage facility, so it runs in CI with no infrastructure.
 │      └── adapters/                                                  │
 │            ├── base.py    ← PlantAdapter protocol (the contract)    │
 │            ├── mock.py    ← default, deterministic demo data        │
-│            └── esp32.py   ← (in progress) HTTP to a live device     │
+│            └── esp32.py   ← HTTP to a live SiloScan module          │
 └──────────────────────────────┬──────────────────────────────────────┘
                                │
             ┌──────────────────┼──────────────────┐
@@ -143,13 +153,36 @@ layer resolves plant context from the motor rather than from a
 constant, so a motor without one is refused instead of evaluated
 against the wrong plant.
 
-`INDUSTRIAL_MCP_ADAPTER` selects which one runs. It currently knows
-`mock` (deterministic, shipped, used by CI) and `esp32` (in progress).
-An unrecognized name raises at startup — the server never falls back to
-the mock, because answering questions about a plant you are not
-connected to is worse than refusing to start.
+`INDUSTRIAL_MCP_ADAPTER` selects which one runs. It knows `mock`
+(deterministic, shipped, used by CI) and `esp32` (HTTP to a live
+SiloScan thermometry module). An unrecognized name raises at startup —
+the server never falls back to the mock, because answering questions
+about a plant you are not connected to is worse than refusing to start.
 
-To talk to a real plant, drop a sibling module implementing the
+```bash
+INDUSTRIAL_MCP_ADAPTER=esp32 \
+INDUSTRIAL_MCP_ESP32_HOST=192.168.1.100 \
+INDUSTRIAL_MCP_ESP32_CABLES=0,8 \
+uv run industrial-mcp
+```
+
+`INDUSTRIAL_MCP_ESP32_CABLES` defaults to channel `0` alone — each
+channel costs a OneWire conversion, so the default is cheap rather than
+complete. Leaving it out silently drops every other probe.
+
+Two things the `esp32` adapter does that are worth copying into your
+own adapter, both of them about not laundering a sensor fault into a
+plausible number:
+
+- A reading counts only when the firmware classified it `valid` **and**
+  the temperature is actually present. Averaging a missing reading as
+  0 °C is how a hot silo reads cool.
+- An unreachable module returns `{"error": "device_unreachable"}`, never
+  an exception and never a stale number wearing a fresh timestamp. The
+  timestamp comes from the machine doing the read, because the module's
+  clock is only right after an NTP sync.
+
+To talk to a different plant, drop a sibling module implementing the
 Protocol and add its name to `build_adapter` in `server.py`.
 
 ---
@@ -188,18 +221,34 @@ its own for IEC 62443, IATF 16949, or similar. Pair it with your
 plant's existing change-management system; this repo is a starting
 point, not a finished compliance story.
 
-**Mock adapter only? Where's MQTT / OPC UA?**
-This scaffold deliberately stops at the shape of the surface. Real
-adapters belong in a follow-up issue and are usually plant-specific
-anyway — the broker URLs, topic structures, and ACLs you can publish
-publicly are usually zero.
+**Is this only a mock? Where's MQTT / OPC UA?**
+No longer only a mock — the `esp32` adapter reads a live device over
+HTTP, and the read path is verified against it. MQTT and OPC UA are
+still absent, and they are usually plant-specific anyway: the broker
+URLs, topic structures, and ACLs you can publish publicly are usually
+zero. The `PlantAdapter` Protocol is the extension point.
+
+**So the safety gate is proven against real equipment?**
+No, and this is the honest limit. The verified part is the **read**
+path. The module's firmware exposes no relay or motor endpoint, so
+`list_motors` returns `[]` and `apply_motor_action` refuses with a
+stated reason. The three-layer write gate still guards a dictionary in
+memory. Wiring it to a physical relay is the next piece of work.
 
 ---
 
 ## Status
 
-Active scaffold, not yet 1.0. The shapes are stable; expect breaking
-changes in non-public APIs until the first MQTT adapter lands.
+Read path verified against hardware; write path not yet. Not 1.0 —
+the shapes are stable, but expect breaking changes in non-public APIs.
+
+| Area | State |
+| --- | --- |
+| `mock` adapter | Shipped, deterministic, used by CI |
+| `esp32` adapter, read path | **Verified against a live module** — [evidence](docs/hardware-verification.md) |
+| Safety gate + audit log | Implemented and tested; **still guarding in-memory state** |
+| Write path against real hardware | Not done |
+| MQTT / OPC UA adapters | Not started |
 
 ## Author
 
