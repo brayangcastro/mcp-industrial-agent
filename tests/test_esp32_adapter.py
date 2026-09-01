@@ -213,11 +213,9 @@ def test_no_motors_listed_when_the_firmware_has_no_relay() -> None:
 # ── write path against firmware 0.4.0 ─────────────────────────────
 #
 # esp32_relay_on/off.json are recorded from device banco-silo3 running
-# 0.4.0. The mismatch payload below is the one exception in this suite
-# and says so: it is constructed rather than captured, because on 0.4.0
-# there was no safe way to make the pin disagree with the command.
-# Firmware 0.6.0 adds a feedback input so the fault can be produced by
-# pulling a wire; once that is captured, this becomes a fixture.
+# 0.4.0. esp32_relay_mismatch.json is recorded from 0.6.0 with the
+# feedback wire absent — a real actuator-did-not-follow, not a payload
+# someone typed. Every fixture in this suite now comes off hardware.
 
 
 def _relay_adapter(relay: dict[str, Any]) -> Esp32Adapter:
@@ -263,29 +261,43 @@ def test_starting_the_motor_reports_the_pin_not_the_command() -> None:
     assert result["state"] == "on"
 
 
-def test_a_pin_that_does_not_follow_the_command_is_a_fault() -> None:
-    """The test this endpoint exists for.
+def test_an_actuator_that_does_not_follow_is_a_fault() -> None:
+    """The test this endpoint exists for, against a recorded fault.
 
-    The module was told ``on`` and the pin still reads ``off``. Reporting
-    success would tell an operator a fan is running while the grain keeps
-    heating — the physical version of averaging a dead sensor as 0 °C.
+    Captured 2026-08-31 with the feedback wire off: commanded ``on``,
+    output pin driving, feedback still ``off``. Reporting success here
+    would tell an operator a fan is running while the grain keeps heating
+    — the physical version of averaging a dead sensor as 0 °C.
     """
-    stuck = {
-        "id": "fan-1",
-        "state": "off",       # measured at the pin
-        "commanded": "on",    # what it was told
-        "pin": 5,
-        "mismatch": True,
-    }
-    adapter = _relay_adapter(stuck)
+    adapter = _relay_adapter(_fixture("esp32_relay_mismatch.json"))
 
     result = adapter.apply_motor_action("fan-1", "start")
     assert result["ok"] is False
-    assert "did not follow" in result["reason"]
+    assert result["state"] == "fault"
+
+    # Names the half that broke. The output stage was fine; the actuator
+    # was not, and an operator sent to the wrong half wastes the outage.
+    assert "actuator did not follow" in result["reason"]
+    assert "pin 6" in result["reason"]
 
     # And it stays visible as a fault, so safety.py blocks the next action
     # instead of retrying against broken hardware.
     assert adapter.list_motors("banco-silo3")[0]["state"] == "fault"
+
+
+def test_a_dead_output_stage_is_reported_as_the_other_half() -> None:
+    """Same fault flag, different culprit: the GPIO never drove.
+
+    Constructed, and unlike the case above it has to be — reproducing a
+    dead output driver means damaging one.
+    """
+    dead_driver = {
+        "id": "fan-1", "state": "off", "commanded": "on",
+        "drive": "off", "pin": 5, "pin_fb": 6, "mismatch": True,
+    }
+    result = _relay_adapter(dead_driver).apply_motor_action("fan-1", "start")
+    assert result["ok"] is False
+    assert "output stage did not follow" in result["reason"]
 
 
 def test_unknown_action_is_refused_without_touching_the_device() -> None:

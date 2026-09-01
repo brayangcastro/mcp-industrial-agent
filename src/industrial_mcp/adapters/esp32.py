@@ -295,23 +295,49 @@ class Esp32Adapter:
 
     # ── write paths ───────────────────────────────────────────────
     #
-    # Firmware 0.4.0 added /api/relay: GET reports the level read back off
-    # the pin, POST drives it. Everything here leans on that distinction —
-    # the module publishes both what it was told and what the pin actually
-    # reads, so a driver that stopped following orders surfaces as a fault
-    # instead of as a confident "on".
+    # /api/relay publishes three things, and keeping them apart is the
+    # whole design: ``commanded`` is the last order, ``drive`` is the level
+    # on the output pin, and ``state`` is the actuator's own feedback line
+    # (firmware 0.6.0+, a second GPIO).
+    #
+    # Reading back only the output pin — which is what 0.4.0 did — detects
+    # a dead GPIO driver and nothing else. The failures that matter are the
+    # relay not closing, the coil going open, the contactor not pulling in,
+    # and in every one of those the output still reads "on" while the fan
+    # sits still. So ``state`` comes from the feedback, and ``drive`` is
+    # kept alongside it because together they say *which* half broke.
 
     def _relay(self) -> dict[str, Any] | None:
         relay = self._get("/api/relay")
         return relay if isinstance(relay, dict) else None
 
+    @staticmethod
+    def _mismatch_reason(relay: dict[str, Any]) -> str:
+        """Say which half failed, not just that something did.
+
+        ``drive`` on with feedback off is the actuator: wiring, coil,
+        contacts. ``drive`` off when it was commanded on is the GPIO
+        itself. An operator sent to the wrong half wastes the outage.
+        """
+        commanded = relay.get("commanded")
+        if relay.get("drive") == commanded:
+            return (
+                f"commanded {commanded} and pin {relay.get('pin')} is driving it, "
+                f"but feedback on pin {relay.get('pin_fb')} reads "
+                f"{relay.get('state')} — the actuator did not follow"
+            )
+        return (
+            f"commanded {commanded} but pin {relay.get('pin')} is not driving "
+            f"({relay.get('drive')}) — the output stage did not follow"
+        )
+
     def _motor_from_relay(self, relay: dict[str, Any], plant_id: str) -> dict[str, Any]:
         """Shape one relay as the motor record the tool layer expects.
 
-        ``state`` comes from the measured pin, not from ``commanded``. When
-        the two disagree the motor is ``fault``, which safety.py already
-        refuses to act on — that refusal is the whole point of the module
-        reporting both.
+        ``state`` is what the actuator reports about itself, not what it
+        was told. When the two disagree the motor is ``fault``, which
+        safety.py already refuses to act on — that refusal is the whole
+        point of the module publishing both.
         """
         measured_on = relay.get("state") == "on"
         if relay.get("mismatch"):
@@ -323,6 +349,7 @@ class Esp32Adapter:
             "plant_id": plant_id,
             "silo_id": self._silo_id(),
             "kind": "fan",
+            "drive": relay.get("drive"),
             "state": state,
             "commanded": relay.get("commanded"),
             "pin": relay.get("pin"),
@@ -361,11 +388,12 @@ class Esp32Adapter:
         return self._motor_from_relay(relay, plant_id)
 
     def apply_motor_action(self, motor_id: str, action: str) -> dict[str, Any]:
-        """Drive the relay, then report the pin — not the command.
+        """Drive the relay, then report the actuator — not the command.
 
-        The success of a write is decided by reading the hardware back. A
-        POST that returned 200 while the pin stayed low is a failure, and
-        this is the layer that has to notice.
+        The success of a write is decided by what the hardware reports
+        back about itself. A POST that returned 200 while the actuator
+        never engaged is a failure, and this is the layer that has to
+        notice.
         """
         state = {"start": "on", "stop": "off"}.get(action)
         if state is None:
@@ -394,10 +422,8 @@ class Esp32Adapter:
         if relay.get("mismatch"):
             return {
                 "ok": False,
-                "reason": (
-                    f"commanded {relay.get('commanded')} but pin {relay.get('pin')} "
-                    f"reads {relay.get('state')} — actuator did not follow"
-                ),
+                "reason": self._mismatch_reason(relay),
                 "state": "fault",
+                "drive": relay.get("drive"),
             }
         return {"ok": True, "state": relay.get("state"), "commanded": relay.get("commanded")}
