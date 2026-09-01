@@ -16,8 +16,9 @@ firmware 0.3.0, the relay captures on 2026-08-30 against 0.4.0.
 | `esp32_probe_i8_populated.json` | **recorded** | `GET /api/probe?i=8`, one DS18B20 chilled in a glass — 15.5 °C |
 | `esp32_last_populated.json` | **recorded** | `GET /api/last` with both cables present |
 | `esp32_probe_fault.json` | **recorded** | `GET /api/probe?i=0` with the data line briefly grounded — ROM enumerates, scratchpad fails CRC, `estado: fault` / `temp: null` |
-| `esp32_relay_off.json` | **recorded** | `GET /api/relay` with GPIO5 low — `state` is the pin, `commanded` is the order |
-| `esp32_relay_on.json` | **recorded** | `GET /api/relay` with GPIO5 high |
+| `esp32_relay_off.json` | **recorded** | `GET /api/relay`, actuator off and feedback agreeing (0.6.0) |
+| `esp32_relay_on.json` | **recorded** | `GET /api/relay`, actuator on and feedback agreeing (0.6.0) |
+| `esp32_relay_mismatch.json` | **recorded** | `GET /api/relay` with the feedback wire removed — commanded `on`, `drive` on, feedback `off`. A real actuator that did not follow |
 
 **Every fixture here is recorded from hardware. None are derived.** The fault
 capture took 451 polls over 98 seconds of wiggling one connector; it is the
@@ -42,18 +43,19 @@ one cold, 16 degrees apart and both valid. Their average, 23.5 °C, resembles
 neither — which is the case the snapshot's `min_temp_c` / `max_temp_c` exist to
 keep visible.
 
-There is no `esp32_relay_mismatch.json`, and the absence is deliberate. The test
-suite covers that branch with a payload constructed inline in
-`test_esp32_adapter.py`, which says so at the point of use — a constructed
-payload is fine as long as nothing in this folder implies it came off a device.
+`esp32_relay_mismatch.json` is a real actuator failure, captured 2026-08-31 with
+the feedback wire off: commanded `on`, output pin driving, feedback still `off`.
+It took firmware 0.6.0 to make it capturable at all.
 
-⚠️ **This file used to say the capture needed "a jumper holding GPIO5 down while
-the firmware drives it high." Do not do that** — shorting a driven-HIGH ESP32-S3
-output to ground draws far past the 40 mA per-pad maximum, and any resistor big
-enough to be safe cannot pull the pin down anyway. It was also measuring the
-wrong failure: reading back your own output only catches a dead GPIO driver, not
-a relay that failed to close.
+⚠️ **An earlier version of this file said the capture needed "a jumper holding
+GPIO5 down while the firmware drives it high." Do not do that** — shorting a
+driven-HIGH ESP32-S3 output to ground draws far past the 40 mA per-pad maximum,
+and any resistor big enough to be safe cannot pull the pin down anyway. It was
+also measuring the wrong failure: reading back your own output only catches a
+dead GPIO driver, not a relay that failed to close. 0.6.0 added a separate
+feedback input, so the fault is now produced by **removing a wire**.
 
-Firmware 0.6.0 adds a separate feedback input (`PIN_RELAY_FB`), so the fault is
-produced by **removing a wire** instead. Once that is flashed and the capture is
-real, this fixture will exist and this paragraph goes away.
+One case in the suite is still constructed and cannot be otherwise: a **dead
+output stage** (`drive` off when commanded on). Producing that for real means
+damaging a pin. It lives inline in `test_esp32_adapter.py` and says so where it
+is used.

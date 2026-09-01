@@ -27,7 +27,7 @@ misma familia, y el adapter se escribió contra el que existe:
 
 | | |
 |---|---|
-| Firmware | `agrostar-s3-onewire`, dispositivo `banco-silo3`, silo 3. Camino de lectura verificado en **0.3.0**; **0.4.0** agregó `/api/relay` para el de escritura |
+| Firmware | `agrostar-s3-onewire`, dispositivo `banco-silo3`, silo 3. Camino de lectura verificado en **0.3.0**; **0.4.0** agregó `/api/relay`; **0.5.0** agregó mDNS; **0.6.0** separó el actuador en pin de accionamiento y pin de realimentación |
 | MCU | ESP32-S3 (serial USB CH343) |
 | Sensado | DS18B20 por OneWire detrás de un mux de 16 canales, **VDD externo** (no parásito) |
 | Sondas | 2 × DS18B20 en canales 0 y 8 del mux, ROMs `2839a47997140315` y `28142007d6013cf6` |
@@ -178,6 +178,51 @@ Nadie le dijo que tuviera cuidado; el contrato de la herramienta hizo que el
 camino cuidadoso fuera el único disponible. Así se debe sentir la compuerta
 desde afuera.
 
+### 4c. Una falla a la que el software no le pudo dar la vuelta con palabras (2026-08-31)
+
+El firmware 0.6.0 divide el actuador en dos pines: GPIO5 acciona, GPIO6 lee si
+lo siguió. `state` sale de la realimentación, `drive` del pin de salida, y
+conservar ambos es lo que vuelve la falla diagnosticable y no solo detectable.
+
+Con el cable de realimentación desconectado, y orden de encender:
+
+```json
+{"id":"fan-1","commanded":"on","drive":"on","state":"off",
+ "pin":5,"pin_fb":6,"mismatch":true}
+```
+
+`drive: "on"` dice que el GPIO está haciendo su trabajo. `state: "off"` dice
+que el actuador no. Un solo pin no habría podido distinguirlos.
+
+**Y luego la parte interesante.** Llamada con
+`INDUSTRIAL_MCP_ALLOW_WRITES=true`, `dry_run=False`, un `operator_id` y una
+`reason` — todas las compuertas abiertas — la herramienta aun así regresó:
+
+```
+phase        : blocked_by_safety
+would_execute: False
+no_active_fault   passed=False   fault must be cleared first
+action_meaningful passed=False   start requested while motor is fault
+```
+
+Nada se negó por un permiso faltante. Se negó porque el hardware dijo que el
+actuador estaba en falla, y esa verificación nunca había corrido ni una sola
+vez contra un hecho físico.
+
+**Y la falla se limpió sola.** Reconectar el cable movió `mismatch` de `true`
+a `false` sin mandar ningún comando — el estado se lee, no lo enclava un
+software que luego necesitaría que alguien se acordara de resetearlo.
+
+La matriz sana, corrida de principio a fin sobre el mismo actuador:
+
+| Paso | `phase` | cmd | drive | realimentación |
+|---|---|---|---|---|
+| 1. defaults | `dry_run` | off | off | off |
+| 2. sin `operator_id` | `rejected` | off | off | off |
+| 3. servidor en solo lectura | `rejected_server_policy` | off | off | off |
+| 4. las cuatro condiciones | `executed` | **on** | **on** | **on** |
+| 5. stop, todas las condiciones | `executed` | off | off | off |
+
 ### 5. Las negativas se sostienen cuando el módulo está ciego
 
 Sin sonda conectada, el mismo adapter regresa lo contrario, y eso también es
@@ -281,38 +326,17 @@ que se pueda confiar en un adapter contra él.
 
 Cosas que se creen pero no se demostraron. Están separadas aquí a propósito.
 
-**Un relevador no es un motor.** GPIO5 maneja un pin de nivel lógico con el
-LED integrado reflejándolo. No se ha conmutado nada con inercia, corriente de
-arranque o un térmico de sobrecarga. La compuerta se verificó contra *un
-actuador que se mueve*, que es la parte que antes faltaba — pero secuenciar un
-ventilador trifásico real trae interlocks, contactos de retroalimentación de
-marcha y requisitos de categoría de paro que nada de esto atiende.
+**Un relevador no es un motor.** GPIO5 maneja un pin de nivel lógico y GPIO6
+lo lee de vuelta; el LED integrado refleja el estado. No se ha conmutado nada
+con inercia, corriente de arranque o un térmico de sobrecarga. La
+realimentación de marcha ya es genuinamente parte del diseño y no un hueco —
+pero secuenciar un ventilador trifásico sigue trayendo interlocks y requisitos
+de categoría de paro que nada de esto atiende.
 
-**La ruta de `mismatch` no se ha disparado en hardware.** `state != commanded`
-es la rama que convierte un actuador atorado en un `fault`, y solo la cubre un
-payload construido en la suite de pruebas. Sigue *implementada y con pruebas
-unitarias, no demostrada*.
-
-> ⚠️ **Versiones anteriores de este documento decían que se forzara con un
-> jumper sosteniendo GPIO5 en bajo mientras el firmware lo ordena en alto. No lo
-> hagas.** Una salida del ESP32-S3 en HIGH tiene una resistencia de encendido de
-> decenas de ohms, así que aterrizarla pasa muy por encima del máximo absoluto
-> de 40 mA por pad. Y una resistencia lo bastante grande para ser segura no
-> alcanza a bajar el pin: gana el driver. La instrucción era peligrosa e inútil
-> a la vez.
->
-> El problema de fondo es que medía lo equivocado. Leer de vuelta la propia
-> salida solo detecta un **driver de GPIO muerto**. Lo que falla en una planta es
-> que el relevador no cierre, que la bobina se abra, que el contactor no pegue —
-> y en todos esos casos el pin de salida sigue leyendo `on` mientras el
-> ventilador está parado.
->
-> La forma correcta es una **entrada de realimentación** aparte: un pin acciona,
-> otro lee si el actuador siguió. Así la falla se produce **quitando un cable**,
-> sin cortocircuitar nada. Eso es lo que implementa el firmware 0.6.0
-> (`PIN_RELAY` acciona, `PIN_RELAY_FB` lee, y `state` sale de la realimentación),
-> y es la manera honesta de cerrar este hueco. **Aún sin flashear ni verificar**
-> al momento de escribir esto — por eso está aquí y no en *Qué se verificó*.
+**Una etapa de salida muerta sigue siendo construida.** El adapter distingue
+"el actuador no siguió" de "el GPIO nunca accionó", y solo la primera se ha
+producido en hardware. Reproducir la segunda implica dañar un pin, así que esa
+rama se queda como un payload construido — el único que queda en este repo.
 
 **Solo existe un actuador.** `RELAY_ID` es una constante en tiempo de
 compilación, así que el módulo responde exactamente por `fan-1`. Múltiples
@@ -351,7 +375,8 @@ abajo.
 
 ```bash
 INDUSTRIAL_MCP_ADAPTER=esp32 \
-INDUSTRIAL_MCP_ESP32_HOST=192.168.1.100 \
+INDUSTRIAL_MCP_ESP32_HOST=banco-silo3.local \
+INDUSTRIAL_MCP_ESP32_DEVICE_ID=banco-silo3 \
 INDUSTRIAL_MCP_ESP32_CABLES=0,8 \
 uv run python -c "
 from industrial_mcp.adapters.esp32 import Esp32Adapter
@@ -365,7 +390,18 @@ OneWire, así que el default es barato, no completo.
 
 Para un host MCP, ver [`examples/claude-desktop-config.json`](../examples/claude-desktop-config.json).
 
-**La dirección se mueve.** Este módulo tomó tres leases DHCP distintos en tres
-reinicios (`.71` → `.69` → `.100`). Cualquier cosa que fije la IP en un
-archivo se queda obsoleta en el siguiente ciclo de energía. Resérvala por MAC,
-o lee la dirección en la consola serial al arrancar.
+**La dirección se mueve, así que deja de usar una.** Este módulo tomó cuatro
+leases DHCP distintos en dos días (`.71` → `.69` → `.100` → `.66`), y el último
+pasó **sin reiniciarse**: simplemente renovó. Cada config obsoleta en la
+historia de este proyecto sale de ahí.
+
+El firmware 0.5.0 publica `<device_id>.local` por mDNS y lo re-anuncia al
+reconectar, así que el nombre sigue al dispositivo. El salto a `.66` se detectó
+justo así: la dirección nunca se consultó. Pon también
+`INDUSTRIAL_MCP_ESP32_DEVICE_ID` y el adapter se relocaliza a media sesión si el
+nombre llegara a fallar — adoptando solo un dispositivo que se identifique con
+ese id, porque un barrido no puede distinguir "mi módulo se movió" de "contestó
+otra cosa".
+
+Reservar el lease por MAC sigue valiendo la pena. Solo que ya no es lo único
+que te separa de una config rota.

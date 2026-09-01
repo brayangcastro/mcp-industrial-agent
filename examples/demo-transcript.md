@@ -129,9 +129,11 @@ rather than prose in a reply.
 - **The server was started with `INDUSTRIAL_MCP_ALLOW_WRITES=true`** for this
   session. That is the one layer a prompt cannot reach, and it was deliberately
   opened. Read-only is the default for a reason.
-- **The `mismatch` path never fired.** The adapter reports a stuck pin as
-  `fault`, and that branch is unit-tested but has not been triggered on real
-  hardware.
+- **The `mismatch` path has since fired on hardware** (2026-08-31, firmware
+  0.6.0 with a feedback input on a second GPIO). With the feedback wire pulled
+  and every write gate open, the call came back `blocked_by_safety` — refused on
+  physical evidence rather than a missing permission. See
+  [`docs/hardware-verification.md`](../docs/hardware-verification.md) §4c.
 
 Full evidence, including what remains unverified:
 [`docs/hardware-verification.md`](../docs/hardware-verification.md)

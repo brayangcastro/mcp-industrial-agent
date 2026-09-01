@@ -278,8 +278,8 @@ shapes are stable, but expect breaking changes in non-public APIs.
 | `mock` adapter | Shipped, deterministic, used by CI |
 | `esp32` adapter, read path | **Verified against a live module** — [evidence](docs/hardware-verification.md) |
 | Safety gate + audit log | **Verified against a physical pin** — dry run and both rejections left it low |
-| Actuator fault detection (`mismatch`) | Implemented and unit-tested; **not yet triggered on hardware** |
-| Real motor (inrush, interlocks, run feedback) | Not attempted — the verified actuator is a GPIO with an LED |
+| Actuator fault detection (`mismatch`) | **Triggered on hardware** — feedback wire pulled; safety refused with every gate open |
+| Real motor (inrush, interlocks) | Not attempted — the verified actuator is a GPIO pair with an LED |
 | MQTT / OPC UA adapters | Not started |
 
 ## Author

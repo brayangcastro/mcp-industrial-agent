@@ -1,1 +1,1 @@
-{"id":"fan-1","state":"off","commanded":"off","pin":5,"mismatch":false}
+{"id":"fan-1","state":"off","commanded":"off","drive":"off","pin":5,"pin_fb":6,"mismatch":false}

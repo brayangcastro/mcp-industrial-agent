@@ -26,7 +26,7 @@ family, and the adapter was written against the one that exists:
 
 | | |
 |---|---|
-| Firmware | `agrostar-s3-onewire`, device `banco-silo3`, silo 3. Read path verified on **0.3.0**; **0.4.0** added `/api/relay` for the write path |
+| Firmware | `agrostar-s3-onewire`, device `banco-silo3`, silo 3. Read path verified on **0.3.0**; **0.4.0** added `/api/relay`; **0.5.0** added mDNS; **0.6.0** split the actuator into a drive pin and a feedback pin |
 | MCU | ESP32-S3 (CH343 USB serial) |
 | Sensing | DS18B20 on OneWire behind a 16-channel mux, **external VDD** (not parasitic) |
 | Probes | 2 × DS18B20 on mux channels 0 and 8, ROMs `2839a47997140315` and `28142007d6013cf6` |
@@ -173,6 +173,52 @@ back asking for an operator id and a reason before it would proceed. Nobody
 prompted it to be careful; the tool's contract made the careful path the only
 one available. That is what the gate is supposed to feel like from the outside.
 
+### 4c. A fault the software could not talk its way past (2026-08-31)
+
+Firmware 0.6.0 splits the actuator across two pins: GPIO5 drives, GPIO6 reads
+whether it followed. `state` comes from the feedback, `drive` from the output
+pin, and keeping both is what makes the failure diagnosable instead of merely
+detectable.
+
+With the feedback wire off, commanded on:
+
+```json
+{"id":"fan-1","commanded":"on","drive":"on","state":"off",
+ "pin":5,"pin_fb":6,"mismatch":true}
+```
+
+`drive: "on"` says the GPIO is doing its job. `state: "off"` says the actuator
+is not. One pin could not have told those apart.
+
+**Then the interesting part.** Called with `INDUSTRIAL_MCP_ALLOW_WRITES=true`,
+`dry_run=False`, an `operator_id` and a `reason` — every gate open — the tool
+still returned:
+
+```
+phase        : blocked_by_safety
+would_execute: False
+no_active_fault   passed=False   fault must be cleared first
+action_meaningful passed=False   start requested while motor is fault
+```
+
+Nothing was refused for a missing permission. It was refused because the
+hardware said the actuator was faulted, and that check had never once run
+against a physical fact.
+
+**And the fault cleared itself.** Reconnecting the wire moved `mismatch` from
+`true` to `false` with no command sent — the state is read, not latched by
+software that would then need someone to remember to reset it.
+
+The healthy matrix, run start-to-finish on the same actuator:
+
+| Step | `phase` | cmd | drive | feedback |
+|---|---|---|---|---|
+| 1. defaults | `dry_run` | off | off | off |
+| 2. no `operator_id` | `rejected` | off | off | off |
+| 3. read-only server | `rejected_server_policy` | off | off | off |
+| 4. all four conditions | `executed` | **on** | **on** | **on** |
+| 5. stop, all conditions | `executed` | off | off | off |
+
 ### 5. The refusals hold when the module is blind
 
 With no probe attached, the same adapter returns the opposite, and that is also
@@ -275,37 +321,16 @@ adapter can be trusted against it.
 
 Things believed but not demonstrated. They are separated here on purpose.
 
-**A relay is not a motor.** GPIO5 drives a logic-level pin with the onboard LED
-mirroring it. Nothing with inertia, inrush current, or a thermal overload has
-been switched. The gate was verified against *an actuator that moves*, which is
-the part that was previously missing — but sequencing a real three-phase fan
-brings interlocks, run-feedback contacts and stop-category requirements that
-none of this addresses.
+**A relay is not a motor.** GPIO5 drives a logic-level pin and GPIO6 reads it
+back; the onboard LED mirrors the state. Nothing with inertia, inrush current,
+or a thermal overload has been switched. Run feedback is now genuinely part of
+the design rather than a gap — but sequencing a three-phase fan still brings
+interlocks and stop-category requirements that none of this addresses.
 
-**The mismatch path has not been triggered on hardware.** `state != commanded`
-is the branch that turns a stuck actuator into a `fault`, and it is covered only
-by a constructed payload in the test suite. It remains *implemented and
-unit-tested, not demonstrated*.
-
-> ⚠️ **Earlier revisions of this document told you to force it with a jumper
-> holding GPIO5 down while the firmware drove it high. Do not do that.** An
-> ESP32-S3 output in its HIGH state has an on-resistance in the tens of ohms, so
-> shorting it to ground draws well past the 40 mA absolute maximum for a single
-> pad. And a resistor large enough to be safe cannot pull the pin down at all —
-> the driver simply wins. The instruction was both dangerous and ineffective.
->
-> The deeper problem is that it was measuring the wrong thing. Reading back your
-> own output pin only detects a **dead GPIO driver**. What fails in a plant is
-> the relay not closing, the coil going open, the contactor not pulling in — and
-> in every one of those the output pin still reads `on` while the fan sits
-> still.
->
-> The correct shape is a separate **feedback input**: one pin drives, another
-> reads whether the actuator followed. Then the fault is produced by removing a
-> wire, with nothing shorted. That is what firmware 0.6.0 implements
-> (`PIN_RELAY` drives, `PIN_RELAY_FB` reads, `state` comes from the feedback),
-> and it is the honest way to close this gap. **Not yet flashed or verified at
-> the time of writing** — it is listed here, not in *What was verified*.
+**A dead output stage is still constructed.** The adapter distinguishes "the
+actuator did not follow" from "the GPIO never drove", and only the first has
+been produced on hardware. Reproducing the second means damaging a pin, so that
+branch stays a typed payload — the only one left in this repo.
 
 **Only one actuator exists.** `RELAY_ID` is a compile-time constant, so the
 module answers for exactly `fan-1`. Multiple relays would need the id to become
@@ -342,7 +367,8 @@ face of good data, and hot grain averages downward.
 
 ```bash
 INDUSTRIAL_MCP_ADAPTER=esp32 \
-INDUSTRIAL_MCP_ESP32_HOST=192.168.1.100 \
+INDUSTRIAL_MCP_ESP32_HOST=banco-silo3.local \
+INDUSTRIAL_MCP_ESP32_DEVICE_ID=banco-silo3 \
 INDUSTRIAL_MCP_ESP32_CABLES=0,8 \
 uv run python -c "
 from industrial_mcp.adapters.esp32 import Esp32Adapter
@@ -356,7 +382,17 @@ the default is cheap rather than complete.
 
 For an MCP host, see [`examples/claude-desktop-config.json`](../examples/claude-desktop-config.json).
 
-**The address moves.** This module took three different DHCP leases in three
-reboots (`.71` → `.69` → `.100`). Anything that pins the IP in a file goes
-stale on the next power cycle. Reserve it by MAC, or read the address off the
-serial console at boot.
+**The address moves, so stop using one.** This module took four different DHCP
+leases in two days (`.71` → `.69` → `.100` → `.66`), and the last one happened
+without a reboot — it simply renewed. Every stale config in this project's
+history traces back to that.
+
+Firmware 0.5.0 publishes `<device_id>.local` over mDNS and re-announces on
+reconnect, so the name follows the device. The `.66` move was found this way:
+the address was never looked up. Set `INDUSTRIAL_MCP_ESP32_DEVICE_ID` as well
+and the adapter will relocate itself mid-session if the name ever fails —
+adopting only a device that identifies itself as that id, because a sweep
+cannot tell "my module moved" from "something else answered".
+
+Reserving the lease by MAC is still worth doing. It is just no longer the only
+thing standing between you and a broken config.

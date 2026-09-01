@@ -36,6 +36,12 @@ with DS18B20 probes on a OneWire mux and a relay on GPIO5.
   would fix a stale address one restart too late, and a model-writable file
   that decides which tools load with which environment is a privilege
   escalation path, not a convenience.
+- Actuator **run feedback** on a second GPIO (firmware 0.6.0). `state` is what
+  the actuator reports about itself; `drive` is the output pin. Keeping both
+  separates "the relay did not close" from "the GPIO never drove", and an
+  operator sent to the wrong half wastes the outage. The fault was triggered on
+  hardware by removing the feedback wire — with all three write gates open, the
+  call still came back `blocked_by_safety`.
 - Optional `INDUSTRIAL_MCP_ESP32_DEVICE_ID`. When set, the adapter repoints
   itself mid-session if the configured host goes quiet — but only to a device
   that identifies itself as that id.
@@ -79,10 +85,9 @@ Carried here deliberately rather than left to the commit log:
 
 - The verified actuator is a **logic-level GPIO with an LED**, not a motor.
   Inrush current, interlocks and run-feedback contacts are untouched.
-- The `mismatch` → `fault` branch is implemented and unit-tested but has
-  **never been triggered on hardware**. Firmware 0.6.0 adds a separate feedback
-  input so the fault can be produced by removing a wire; that firmware is not
-  yet flashed or verified.
+- A **dead output stage** (`drive` off when commanded on) is the one branch
+  still covered by a typed payload. Producing it for real means damaging a pin.
+  The actuator-did-not-follow half is recorded from hardware.
 - Only one actuator exists (`fan-1`); `RELAY_ID` is a compile-time constant in
   the firmware.
 - The module has **no authentication**. Acceptable on a lab LAN over stdio,
